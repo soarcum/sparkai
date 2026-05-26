@@ -1,4 +1,4 @@
-package app.blankapp.core.update
+package com.soar.sparkai.core.update
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode

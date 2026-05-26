@@ -1,7 +1,7 @@
 // Global config center. After creating app from template, only modify app name, package name and GitHub repo here!
 ext {
-    applicationId = "app.blankapp"
-    appName = "BlankApp"
+    applicationId = "com.soar.sparkai"
+    appName = "SparkAI"
 
     githubOwner = "soarcum"
     githubRepo = "sparkai"

@@ -1,4 +1,4 @@
-package app.blankapp.core.theme
+package com.soar.sparkai.core.theme
 
 import android.app.Activity
 import android.os.Build

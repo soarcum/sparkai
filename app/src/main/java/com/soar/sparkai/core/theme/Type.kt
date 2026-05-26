@@ -1,4 +1,4 @@
-package app.blankapp.core.theme
+package com.soar.sparkai.core.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

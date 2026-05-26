@@ -1,4 +1,4 @@
-package app.blankapp.feature.home.ui
+package com.soar.sparkai.feature.home.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,8 +12,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import app.blankapp.core.update.UpdateDialog
-import app.blankapp.core.update.UpdateManager
+import com.soar.sparkai.core.update.UpdateDialog
+import com.soar.sparkai.core.update.UpdateManager
 
 @Composable
 fun HomeScreen() {

@@ -1,4 +1,4 @@
-package app.blankapp.core.crash
+package com.soar.sparkai.core.crash
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -43,7 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.blankapp.core.theme.AppTheme
+import com.soar.sparkai.core.theme.AppTheme
 
 class CrashActivity : ComponentActivity() {
 

@@ -1,4 +1,4 @@
-package app.blankapp
+package com.soar.sparkai
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -7,9 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import app.blankapp.core.crash.GlobalExceptionHandler
-import app.blankapp.core.theme.AppTheme
-import app.blankapp.feature.home.ui.HomeScreen
+import com.soar.sparkai.core.crash.GlobalExceptionHandler
+import com.soar.sparkai.core.theme.AppTheme
+import com.soar.sparkai.feature.home.ui.HomeScreen
 
 class MainActivity : ComponentActivity() {
 

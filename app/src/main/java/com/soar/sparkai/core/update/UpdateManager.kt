@@ -1,4 +1,4 @@
-package app.blankapp.core.update
+package com.soar.sparkai.core.update
 
 import android.content.Context
 import android.content.Intent
@@ -8,7 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
-import app.blankapp.BuildConfig
+import com.soar.sparkai.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

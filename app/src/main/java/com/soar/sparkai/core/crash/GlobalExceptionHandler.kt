@@ -1,4 +1,4 @@
-package app.blankapp.core.crash
+package com.soar.sparkai.core.crash
 
 import android.content.Context
 import android.content.Intent
