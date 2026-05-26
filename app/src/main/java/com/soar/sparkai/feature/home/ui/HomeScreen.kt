@@ -32,7 +32,7 @@ fun HomeScreen() {
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "Hello, World!",
+                text = "Welcome to SparkAI!",
                 style = MaterialTheme.typography.headlineLarge
             )
         }
