@@ -107,7 +107,21 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
                 val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
                 if (resultCode != 0 && resultData != null) {
+                    // Android 10+ (API 29+) 强制要求在跨进程创建 MediaProjection 录屏时，前台服务必须已经升级绑定为 mediaProjection 类型
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val notification = NotificationHelper.buildNotification(this)
+                        startForeground(
+                            NotificationHelper.NOTIFICATION_ID,
+                            notification,
+                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                        )
+                    }
                     ScreenshotHelper.captureScreen(this, resultCode, resultData) { success ->
+                        // 截图完成后，将前台服务降级还原为普通默认服务，释放媒体投影占用
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            val notification = NotificationHelper.buildNotification(this)
+                            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+                        }
                         // 截图完成或异常退出后，重新拉起悬浮球
                         showFloatingWindow()
                     }

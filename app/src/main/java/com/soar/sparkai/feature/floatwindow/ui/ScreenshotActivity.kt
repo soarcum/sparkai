@@ -39,18 +39,20 @@ class ScreenshotActivity : ComponentActivity() {
             } else {
                 startService(serviceIntent)
             }
+            // 延迟 300ms 销毁透明中转 Activity，确保前台服务有充分的时间在系统 Binder 中注册投影，防止时序竞争导致 Binder Token 失效
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                finish()
+                overridePendingTransition(0, 0)
+            }, 300)
         } else {
             // 用户取消了授权，通知悬浮窗服务重新展示悬浮球
             val cancelIntent = Intent(this, FloatingService::class.java).apply {
                 action = FloatingService.ACTION_CANCEL_SCREENSHOT
             }
             startService(cancelIntent)
+            finish()
+            overridePendingTransition(0, 0)
         }
-        
-        // 结束当前透明 Activity
-        finish()
-        // 禁用进入和退出过渡动画，使其无缝连接
-        overridePendingTransition(0, 0)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
