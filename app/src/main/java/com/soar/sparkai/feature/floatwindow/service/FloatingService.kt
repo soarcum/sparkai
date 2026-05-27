@@ -26,6 +26,7 @@ import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.ui.FloatingWidget
 import com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity
 import com.soar.sparkai.feature.floatwindow.util.NotificationHelper
+import com.soar.sparkai.feature.floatwindow.util.ScreenshotCache
 import com.soar.sparkai.feature.floatwindow.util.ScreenshotHelper
 import androidx.lifecycle.LifecycleRegistry
 import androidx.savedstate.SavedStateRegistry
