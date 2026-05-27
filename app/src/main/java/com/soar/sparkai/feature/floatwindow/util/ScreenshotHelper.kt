@@ -42,13 +42,14 @@ object ScreenshotHelper {
      * 执行屏幕截图主逻辑
      * 
      * @param context 上下文
-     * @param resultCode 录屏授权返回的 ResultCode
-     * @param resultData 录屏授权返回的 Intent 数据
+     * @param imageReader 屏幕长连接读取管道
+     * @param isFirstTime 是否为首次创建管道
      * @param onComplete 截图完成后的回调（参数为成功与否）
      */
-    fun captureScreen(
+    fun captureScreenFromPipeline(
         context: Context,
-        mediaProjection: MediaProjection,
+        imageReader: ImageReader,
+        isFirstTime: Boolean,
         onComplete: (Boolean) -> Unit
     ) {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -57,35 +58,33 @@ object ScreenshotHelper {
         windowManager.defaultDisplay.getRealMetrics(metrics)
         val width = metrics.widthPixels
         val height = metrics.heightPixels
-        val dpi = metrics.densityDpi
 
-        // 成功获取并复用 MediaProjection 实例后，立即通知并安全销毁透明中转 Activity（若处于前台显示状态的话）
+        // 成功从长连接管道抓图，立即通知并安全销毁中转 Activity（若处于前台显示状态的话）
         com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
 
-        // 2. 创建 ImageReader 来接收屏幕图像，RGBA_8888 格式最适合直接转 Bitmap
-        val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        
-        // 3. 将屏幕内容映射到 ImageReader 的 Surface 上
-        val virtualDisplay = mediaProjection.createVirtualDisplay(
-            "SparkAIScreenCapture",
-            width,
-            height,
-            dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
-            imageReader.surface,
-            null,
-            null
-        )
-
-        // 4. 等待屏幕缓冲渲染完毕，使用协程或延时机制抓取最新的一帧
+        // 4. 等待屏幕缓冲渲染完毕，使用协程抓取最新的一帧
         CoroutineScope(Dispatchers.Default).launch {
-            // 给系统绘制和填充 Surface 留出足够的微秒级缓冲时间（500ms），避免截出黑屏
-            delay(500)
+            // 延时策略：如果是初次建立连接，延时 500ms 等待 Surface 缓冲区建立。
+            // 如果是后续静默截图，由于悬浮窗由 VISIBLE 变为 GONE 引起的屏幕重绘足以填充 Surface 缓冲，延时 200ms 等待重绘完成。
+            if (isFirstTime) {
+                delay(500)
+            } else {
+                delay(200)
+            }
+
             var image: Image? = null
             var screenshotBitmap: Bitmap? = null
             try {
-                // 获取最新的图像帧
-                image = imageReader.acquireLatestImage()
+                // 尝试获取最新帧，多轮重试以保障在各种低端机/复杂动画下的 100% 成功率
+                var retryCount = 0
+                while (image == null && retryCount < 5) {
+                    image = imageReader.acquireLatestImage() ?: imageReader.acquireNextImage()
+                    if (image == null) {
+                        delay(50)
+                        retryCount++
+                    }
+                }
+
                 if (image != null) {
                     val planes = image.planes
                     val buffer = planes[0].buffer
@@ -107,13 +106,10 @@ object ScreenshotHelper {
                     tempBitmap.recycle()
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                com.soar.sparkai.core.log.AppLogger.e("ScreenshotHelper", "抓取屏幕像素帧或转换 Bitmap 发生异常: ${e.message}", e)
             } finally {
-                // 关闭并释放 Image，以便让底层资源能够快速回收
+                // 关闭并释放 Image，以便让底层资源能够快速回收，但绝不销毁 ImageReader 管道
                 image?.close()
-                // 截图完成，必须释放虚拟屏幕和投影连接以节省内存和电量，但决不可停止 MediaProjection！
-                virtualDisplay.release()
-                imageReader.close()
             }
 
             if (screenshotBitmap != null) {

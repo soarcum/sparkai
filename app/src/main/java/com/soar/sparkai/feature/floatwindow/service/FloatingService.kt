@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.content.pm.ServiceInfo
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -62,9 +65,11 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     private lateinit var layoutParams: WindowManager.LayoutParams
     private lateinit var composeView: ComposeView
 
-    // 全局维持单例 MediaProjection 实例及其 Callback
+    // 全局维持单例 MediaProjection 以及常驻虚拟投屏长连接管道
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
 
     /**
      * 设置 MediaProjection 的生命周期监听，在其被系统停止时及时重置状态，保证下次截图能重新授权
@@ -74,6 +79,14 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             override fun onStop() {
                 AppLogger.w("FloatingService", "检测到 MediaProjection 已由系统或用户主动终止，清理本地长连接引用。")
                 if (mediaProjection == projection) {
+                    try {
+                        virtualDisplay?.release()
+                        imageReader?.close()
+                    } catch (e: Exception) {
+                        AppLogger.e("FloatingService", "释放投屏长连接资源时发生异常: ${e.message}", e)
+                    }
+                    virtualDisplay = null
+                    imageReader = null
                     mediaProjection = null
                     projectionCallback = null
                 }
@@ -81,6 +94,45 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         }
         projection.registerCallback(callback, Handler(Looper.getMainLooper()))
         projectionCallback = callback
+    }
+
+    /**
+     * 初始化常驻投屏长连接流水线（ImageReader & VirtualDisplay）
+     */
+    private fun initProjectionPipeline(projection: MediaProjection): Boolean {
+        return try {
+            mediaProjection = projection
+            setupMediaProjectionCallback(projection)
+
+            // 获取真实的物理屏幕大小以确保截图比例正确
+            val metrics = DisplayMetrics()
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            val width = metrics.widthPixels
+            val height = metrics.heightPixels
+            val dpi = metrics.densityDpi
+
+            // 创建全局唯一的 ImageReader，使用 RGBA_8888 格式
+            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            imageReader = reader
+
+            // 将屏幕内容映射到 ImageReader 的 Surface 上并常驻
+            val display = projection.createVirtualDisplay(
+                "SparkAIScreenCapture",
+                width,
+                height,
+                dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY,
+                reader.surface,
+                null,
+                null
+            )
+            virtualDisplay = display
+            AppLogger.i("FloatingService", "已成功建立全局屏幕投屏长连接流水线（ImageReader & VirtualDisplay 开启常驻）。")
+            true
+        } catch (e: Exception) {
+            AppLogger.e("FloatingService", "建立全局投屏流水线时发生崩溃: ${e.message}", e)
+            false
+        }
     }
 
     // 实现自定义 LifecycleOwner 以保证 ComposeView 挂载在 WindowManager 时能正常进行生命周期驱动
@@ -137,13 +189,14 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 // 截图第一步：隐藏悬浮窗，避免其自身被截图捕获
                 hideFloatingWindow()
                 
-                // 1. 优先复用当前生命周期中已创建并保持有效的 MediaProjection
-                val activeProjection = mediaProjection
-                if (activeProjection != null) {
-                    AppLogger.i("FloatingService", "复用当前存活的 MediaProjection 实例，直接开始静默截图")
-                    performScreenCapture(activeProjection)
+                // 1. 优先复用当前生命周期中已创建并保持有效的虚拟屏幕长连接管道
+                val reader = imageReader
+                val display = virtualDisplay
+                if (reader != null && display != null) {
+                    AppLogger.i("FloatingService", "复用全局常驻投屏长连接管道，直接进行后台静默截图")
+                    performFastScreenCapture(isFirstTime = false)
                 } else {
-                    // 2. 其次，如果运行在低于 Android 14 并且有本地缓存，尝试复用缓存重新获取
+                    // 2. 其次，如果运行在低于 Android 14 并且有本地缓存，尝试复用缓存重新获取并建立管道
                     val useCache = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ScreenshotCache.hasPermission
                     var projectionFromCache: MediaProjection? = null
                     if (useCache) {
@@ -158,14 +211,12 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                         }
                     }
 
-                    if (projectionFromCache != null) {
-                        AppLogger.i("FloatingService", "命中有效授权缓存，直接创建 MediaProjection，无需弹窗。")
-                        mediaProjection = projectionFromCache
-                        setupMediaProjectionCallback(projectionFromCache)
-                        performScreenCapture(projectionFromCache)
+                    if (projectionFromCache != null && initProjectionPipeline(projectionFromCache)) {
+                        AppLogger.i("FloatingService", "根据缓存重新建立投屏长连接流水线，直接开始截图。")
+                        performFastScreenCapture(isFirstTime = true)
                     } else {
-                        // 3. 无可用实例也无有效缓存，必须弹出透明中转 Activity 获取系统授权
-                        AppLogger.i("FloatingService", "无可用 MediaProjection 或授权已失效，弹出系统录屏授权对话框。")
+                        // 3. 无可用管道也无有效缓存，必须弹出透明中转 Activity 获取系统授权
+                        AppLogger.i("FloatingService", "投屏长连接不存在且授权缓存失效，弹出系统录屏授权对话框。")
                         val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
                         }
@@ -174,7 +225,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 }
             }
             ACTION_TAKE_SCREENSHOT_RESULT -> {
-                // 截图第二步：获取到用户授权的 Intent 数据后，先缓存再截图
+                // 截图第二步：获取到用户授权的 Intent 数据后，初始化常驻投屏长连接流水线并执行截图
                 val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
                 val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
                 if (resultCode != 0 && resultData != null) {
@@ -182,12 +233,10 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                     ScreenshotCache.save(resultCode, resultData)
                     val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                     val projection = projectionManager.getMediaProjection(resultCode, resultData)
-                    if (projection != null) {
-                        mediaProjection = projection
-                        setupMediaProjectionCallback(projection)
-                        performScreenCapture(projection)
+                    if (projection != null && initProjectionPipeline(projection)) {
+                        performFastScreenCapture(isFirstTime = true)
                     } else {
-                        AppLogger.e("FloatingService", "授权通过但获取 MediaProjection 实例失败")
+                        AppLogger.e("FloatingService", "授权成功，但初始化全局投屏长连接管道失败。")
                         showFloatingWindow()
                     }
                 } else {
@@ -207,12 +256,11 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     }
 
     /**
-     * 执行实际截图逻辑（供缓存命中和首次授权两个路径共用）
-     *
-     * 负责前台服务类型升级、调用截图工具、截图完成后降级并恢复悬浮球。
-     * 若授权已失效（Android 14+ 单次使用限制），自动清除缓存并提示用户重新授权。
+     * 利用全局长连接管道在后台执行极速抓图并保存
      */
-    private fun performScreenCapture(projection: MediaProjection) {
+    private fun performFastScreenCapture(isFirstTime: Boolean) {
+        val reader = imageReader ?: return
+        
         // Android 10+ 强制要求截图前将前台服务升级为 mediaProjection 类型
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val notification = NotificationHelper.buildNotification(this)
@@ -222,9 +270,10 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             )
         }
-        ScreenshotHelper.captureScreen(this, projection) { success ->
+        
+        ScreenshotHelper.captureScreenFromPipeline(this, reader, isFirstTime) { success ->
             if (!success) {
-                AppLogger.w("FloatingService", "截图执行失败。")
+                AppLogger.w("FloatingService", "极速静默截图执行失败。")
             }
             // 截图完成后，将前台服务降级还原，释放媒体投影资源占用
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -390,15 +439,19 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         isServiceRunning = false
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         
-        // 释放 MediaProjection 底层媒体投影资源，避免内存和系统资源泄漏
+        // 优雅断开全局屏幕投屏常驻连接，彻底释放系统级媒体投影资源句柄
         try {
+            virtualDisplay?.release()
+            imageReader?.close()
             projectionCallback?.let {
                 mediaProjection?.unregisterCallback(it)
             }
             mediaProjection?.stop()
         } catch (e: Exception) {
-            AppLogger.e("FloatingService", "释放 MediaProjection 资源时发生异常: ${e.message}", e)
+            AppLogger.e("FloatingService", "销毁全局投屏长连接流水线发生异常: ${e.message}", e)
         }
+        virtualDisplay = null
+        imageReader = null
         mediaProjection = null
         projectionCallback = null
 
