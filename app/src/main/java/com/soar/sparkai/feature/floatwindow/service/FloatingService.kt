@@ -111,13 +111,15 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             ACTION_TAKE_SCREENSHOT -> {
                 // 截图第一步：隐藏悬浮窗，避免其自身被截图捕获
                 hideFloatingWindow()
-                if (ScreenshotCache.hasPermission) {
+                // Android 14+ (UPSIDE_DOWN_CAKE) 强制要求每次录屏投影前必须重新请求用户授权，不可复用缓存 token
+                val useCache = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ScreenshotCache.hasPermission
+                if (useCache) {
                     // 已有缓存授权，直接跳过弹窗执行截图
                     AppLogger.i("FloatingService", "命中授权缓存，直接开始截图，无需弹窗。")
                     performScreenCapture(ScreenshotCache.getResultCode(), ScreenshotCache.getResultData())
                 } else {
-                    // 无缓存，启动透明 Activity 弹出系统录屏授权对话框（仅首次需要）
-                    AppLogger.i("FloatingService", "无授权缓存，弹出系统录屏授权对话框。")
+                    // 无缓存或运行在 Android 14+，启动透明 Activity 弹出系统录屏授权对话框
+                    AppLogger.i("FloatingService", "需要重新获取授权，弹出系统录屏授权对话框。")
                     val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
                     }

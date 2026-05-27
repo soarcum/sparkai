@@ -63,9 +63,15 @@ object ScreenshotHelper {
         val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         // 1. 获取系统级 MediaProjection 实例
         val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData) ?: run {
+            // 获取失败时，也安全销毁中转 Activity
+            com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
             onComplete(false)
             return
         }
+
+        // 成功获取 MediaProjection 实例后，立即通知并安全销毁透明中转 Activity。
+        // 这确保了在核心的前台服务升级和 Token 绑定期间，中转 Activity 100% 处于最前台，彻底规避 Android 14+ 前台服务启动时序竞争。
+        com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
 
         // 1.5 适配 Android 14 / 15 / 16 安全规范：启动屏幕截取前必须强制注册 Callback
         val projectionCallback = object : MediaProjection.Callback() {
