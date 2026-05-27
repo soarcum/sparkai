@@ -2,6 +2,8 @@ name: Android CI/CD Auto-Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
