@@ -89,6 +89,16 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                     imageReader = null
                     mediaProjection = null
                     projectionCallback = null
+
+                    // 既然投屏已被主动终止，安全合规地将前台服务退回为普通的 specialUse 类型
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        val notification = NotificationHelper.buildNotification(this@FloatingService)
+                        startForeground(
+                            NotificationHelper.NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                        )
+                    }
                 }
             }
         }
@@ -261,33 +271,36 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     private fun performFastScreenCapture(isFirstTime: Boolean) {
         val reader = imageReader ?: return
         
-        // Android 10+ 强制要求截图前将前台服务升级为 mediaProjection 类型
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // 只有在首次创建通道（或重新授权）时，才需要向系统申请升级为 mediaProjection 前台服务类型
+        if (isFirstTime && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val notification = NotificationHelper.buildNotification(this)
-            startForeground(
-                NotificationHelper.NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+ 推荐传入当前服务声明并使用的全部前台类型组合
+                startForeground(
+                    NotificationHelper.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            } else {
+                startForeground(
+                    NotificationHelper.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            }
+            AppLogger.i("FloatingService", "首次建立屏幕截图通道，已升级前台服务类型为 mediaProjection")
+        } else {
+            AppLogger.i("FloatingService", "复用现有投屏长连接管道进行静默截图，无须升级前台类型，跳过 startForeground 校验")
         }
         
         ScreenshotHelper.captureScreenFromPipeline(this, reader, isFirstTime) { success ->
             if (!success) {
                 AppLogger.w("FloatingService", "极速静默截图执行失败。")
             }
-            // 截图完成后，将前台服务降级还原，释放媒体投影资源占用
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val notification = NotificationHelper.buildNotification(this)
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val notification = NotificationHelper.buildNotification(this)
-                startForeground(NotificationHelper.NOTIFICATION_ID, notification)
-            }
-            // 截图完成或异常退出后，重新拉起悬浮球
+            // 注意：此处不再主动降级前台服务！保持前台服务以 mediaProjection 状态运行，
+            // 从而使后继截图可直接静默复用管道而绝对不触发系统的 FGS 时序安全校验。
+            
+            // 重新拉起悬浮球
             showFloatingWindow()
         }
     }
