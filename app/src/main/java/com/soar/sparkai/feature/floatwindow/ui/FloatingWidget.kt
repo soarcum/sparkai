@@ -9,6 +9,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -54,8 +55,6 @@ fun FloatingWidget(
 ) {
     // 展开状态标记
     var isExpanded by remember { mutableStateOf(false) }
-    // 累积拖拽位移大小，用于区分“拖动吸边”与“原地短按点击”
-    var totalDragDistance by remember { mutableStateOf(0f) }
 
     // 呼吸动画控制：使未展开的悬浮球自带微光呼吸感
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -102,26 +101,24 @@ fun FloatingWidget(
                     )
                     .clip(CircleShape)
                     .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                // 专门捕获原地高灵敏轻触，瞬间优雅展开
+                                isExpanded = true
+                            }
+                        )
+                    }
+                    .pointerInput(Unit) {
                         detectDragGestures(
-                            onDragStart = {
-                                totalDragDistance = 0f
-                            },
                             onDragEnd = {
-                                if (totalDragDistance < 15f) {
-                                    // 像素偏移极小，属于有效短按，触发优雅展开
-                                    isExpanded = true
-                                } else {
-                                    // 属于正常拖动，释放后执行吸边对齐
-                                    onDragEnd()
-                                }
+                                // 拖动结束，执行贴边对齐
+                                onDragEnd()
                             },
                             onDragCancel = {
                                 onDragEnd()
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
-                                // 勾股定理累加拖动距离
-                                totalDragDistance += sqrt(dragAmount.x * dragAmount.x + dragAmount.y * dragAmount.y)
                                 onDrag(dragAmount.x.toInt(), dragAmount.y.toInt())
                             }
                         )
