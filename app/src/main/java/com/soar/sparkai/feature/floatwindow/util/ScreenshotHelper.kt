@@ -48,8 +48,7 @@ object ScreenshotHelper {
      */
     fun captureScreen(
         context: Context,
-        resultCode: Int,
-        resultData: Intent,
+        mediaProjection: MediaProjection,
         onComplete: (Boolean) -> Unit
     ) {
         val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -60,26 +59,8 @@ object ScreenshotHelper {
         val height = metrics.heightPixels
         val dpi = metrics.densityDpi
 
-        val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        // 1. 获取系统级 MediaProjection 实例
-        val mediaProjection = projectionManager.getMediaProjection(resultCode, resultData) ?: run {
-            // 获取失败时，也安全销毁中转 Activity
-            com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
-            onComplete(false)
-            return
-        }
-
-        // 成功获取 MediaProjection 实例后，立即通知并安全销毁透明中转 Activity。
-        // 这确保了在核心的前台服务升级和 Token 绑定期间，中转 Activity 100% 处于最前台，彻底规避 Android 14+ 前台服务启动时序竞争。
+        // 成功获取并复用 MediaProjection 实例后，立即通知并安全销毁透明中转 Activity（若处于前台显示状态的话）
         com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
-
-        // 1.5 适配 Android 14 / 15 / 16 安全规范：启动屏幕截取前必须强制注册 Callback
-        val projectionCallback = object : MediaProjection.Callback() {
-            override fun onStop() {
-                super.onStop()
-            }
-        }
-        mediaProjection.registerCallback(projectionCallback, mainHandler)
 
         // 2. 创建 ImageReader 来接收屏幕图像，RGBA_8888 格式最适合直接转 Bitmap
         val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
@@ -113,7 +94,7 @@ object ScreenshotHelper {
                     // 核心算法：解决 GPU 64/128字节对齐带来的 Row Stride Padding 问题
                     val rowPadding = rowStride - pixelStride * width
 
-                    // 创建一个临时带 Padding 尺寸的 Bitmap
+                    // 创建一个临时带 Padding 尺寸 of Bitmap
                     val tempBitmap = Bitmap.createBitmap(
                         width + rowPadding / pixelStride,
                         height,
@@ -130,11 +111,9 @@ object ScreenshotHelper {
             } finally {
                 // 关闭并释放 Image，以便让底层资源能够快速回收
                 image?.close()
-                // 截图完成，必须释放虚拟屏幕和投影连接以节省内存和电量
+                // 截图完成，必须释放虚拟屏幕和投影连接以节省内存和电量，但决不可停止 MediaProjection！
                 virtualDisplay.release()
                 imageReader.close()
-                mediaProjection.unregisterCallback(projectionCallback)
-                mediaProjection.stop()
             }
 
             if (screenshotBitmap != null) {

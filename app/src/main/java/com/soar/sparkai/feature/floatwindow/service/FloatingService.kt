@@ -6,8 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.content.pm.ServiceInfo
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.View
@@ -57,6 +61,27 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     private lateinit var windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
     private lateinit var composeView: ComposeView
+
+    // 全局维持单例 MediaProjection 实例及其 Callback
+    private var mediaProjection: MediaProjection? = null
+    private var projectionCallback: MediaProjection.Callback? = null
+
+    /**
+     * 设置 MediaProjection 的生命周期监听，在其被系统停止时及时重置状态，保证下次截图能重新授权
+     */
+    private fun setupMediaProjectionCallback(projection: MediaProjection) {
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                AppLogger.w("FloatingService", "检测到 MediaProjection 已由系统或用户主动终止，清理本地长连接引用。")
+                if (mediaProjection == projection) {
+                    mediaProjection = null
+                    projectionCallback = null
+                }
+            }
+        }
+        projection.registerCallback(callback, Handler(Looper.getMainLooper()))
+        projectionCallback = callback
+    }
 
     // 实现自定义 LifecycleOwner 以保证 ComposeView 挂载在 WindowManager 时能正常进行生命周期驱动
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -111,19 +136,41 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             ACTION_TAKE_SCREENSHOT -> {
                 // 截图第一步：隐藏悬浮窗，避免其自身被截图捕获
                 hideFloatingWindow()
-                // Android 14+ (UPSIDE_DOWN_CAKE) 强制要求每次录屏投影前必须重新请求用户授权，不可复用缓存 token
-                val useCache = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ScreenshotCache.hasPermission
-                if (useCache) {
-                    // 已有缓存授权，直接跳过弹窗执行截图
-                    AppLogger.i("FloatingService", "命中授权缓存，直接开始截图，无需弹窗。")
-                    performScreenCapture(ScreenshotCache.getResultCode(), ScreenshotCache.getResultData())
+                
+                // 1. 优先复用当前生命周期中已创建并保持有效的 MediaProjection
+                val activeProjection = mediaProjection
+                if (activeProjection != null) {
+                    AppLogger.i("FloatingService", "复用当前存活的 MediaProjection 实例，直接开始静默截图")
+                    performScreenCapture(activeProjection)
                 } else {
-                    // 无缓存或运行在 Android 14+，启动透明 Activity 弹出系统录屏授权对话框
-                    AppLogger.i("FloatingService", "需要重新获取授权，弹出系统录屏授权对话框。")
-                    val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    // 2. 其次，如果运行在低于 Android 14 并且有本地缓存，尝试复用缓存重新获取
+                    val useCache = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ScreenshotCache.hasPermission
+                    var projectionFromCache: MediaProjection? = null
+                    if (useCache) {
+                        try {
+                            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                            projectionFromCache = projectionManager.getMediaProjection(
+                                ScreenshotCache.getResultCode(),
+                                ScreenshotCache.getResultData()
+                            )
+                        } catch (e: Exception) {
+                            AppLogger.e("FloatingService", "尝试通过缓存获取 MediaProjection 发生异常: ${e.message}", e)
+                        }
                     }
-                    startActivity(startActIntent)
+
+                    if (projectionFromCache != null) {
+                        AppLogger.i("FloatingService", "命中有效授权缓存，直接创建 MediaProjection，无需弹窗。")
+                        mediaProjection = projectionFromCache
+                        setupMediaProjectionCallback(projectionFromCache)
+                        performScreenCapture(projectionFromCache)
+                    } else {
+                        // 3. 无可用实例也无有效缓存，必须弹出透明中转 Activity 获取系统授权
+                        AppLogger.i("FloatingService", "无可用 MediaProjection 或授权已失效，弹出系统录屏授权对话框。")
+                        val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                        }
+                        startActivity(startActIntent)
+                    }
                 }
             }
             ACTION_TAKE_SCREENSHOT_RESULT -> {
@@ -133,7 +180,16 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 if (resultCode != 0 && resultData != null) {
                     // 保存授权结果，后续截图可直接复用，无需再次弹窗
                     ScreenshotCache.save(resultCode, resultData)
-                    performScreenCapture(resultCode, resultData)
+                    val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    val projection = projectionManager.getMediaProjection(resultCode, resultData)
+                    if (projection != null) {
+                        mediaProjection = projection
+                        setupMediaProjectionCallback(projection)
+                        performScreenCapture(projection)
+                    } else {
+                        AppLogger.e("FloatingService", "授权通过但获取 MediaProjection 实例失败")
+                        showFloatingWindow()
+                    }
                 } else {
                     showFloatingWindow()
                 }
@@ -156,7 +212,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      * 负责前台服务类型升级、调用截图工具、截图完成后降级并恢复悬浮球。
      * 若授权已失效（Android 14+ 单次使用限制），自动清除缓存并提示用户重新授权。
      */
-    private fun performScreenCapture(resultCode: Int, resultData: Intent) {
+    private fun performScreenCapture(projection: MediaProjection) {
         // Android 10+ 强制要求截图前将前台服务升级为 mediaProjection 类型
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val notification = NotificationHelper.buildNotification(this)
@@ -166,11 +222,9 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             )
         }
-        ScreenshotHelper.captureScreen(this, resultCode, resultData) { success ->
+        ScreenshotHelper.captureScreen(this, projection) { success ->
             if (!success) {
-                // 截图失败可能是因为旧的授权 Token 在 Android 14+ 上已单次失效，清除缓存
-                AppLogger.w("FloatingService", "截图失败，清除授权缓存，下次将重新请求授权。")
-                ScreenshotCache.clear()
+                AppLogger.w("FloatingService", "截图执行失败。")
             }
             // 截图完成后，将前台服务降级还原，释放媒体投影资源占用
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -335,6 +389,19 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         AppLogger.i("FloatingService", "前台服务即将销毁 (onDestroy)，正在释放悬浮窗及系统窗口资源。")
         isServiceRunning = false
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        
+        // 释放 MediaProjection 底层媒体投影资源，避免内存和系统资源泄漏
+        try {
+            projectionCallback?.let {
+                mediaProjection?.unregisterCallback(it)
+            }
+            mediaProjection?.stop()
+        } catch (e: Exception) {
+            AppLogger.e("FloatingService", "释放 MediaProjection 资源时发生异常: ${e.message}", e)
+        }
+        mediaProjection = null
+        projectionCallback = null
+
         // 销毁时清理挂载的窗口，释放内存，避免 Activity/Service 泄漏
         if (::composeView.isInitialized && composeView.parent != null) {
             windowManager.removeView(composeView)
