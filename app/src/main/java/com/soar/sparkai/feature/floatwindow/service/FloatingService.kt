@@ -110,42 +110,27 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             ACTION_TAKE_SCREENSHOT -> {
                 // 截图第一步：隐藏悬浮窗，避免其自身被截图捕获
                 hideFloatingWindow()
-                // 启动透明的 ScreenshotActivity 弹出系统的录屏/截图授权对话框
-                val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                if (ScreenshotCache.hasPermission) {
+                    // 已有缓存授权，直接跳过弹窗执行截图
+                    AppLogger.i("FloatingService", "命中授权缓存，直接开始截图，无需弹窗。")
+                    performScreenCapture(ScreenshotCache.getResultCode(), ScreenshotCache.getResultData())
+                } else {
+                    // 无缓存，启动透明 Activity 弹出系统录屏授权对话框（仅首次需要）
+                    AppLogger.i("FloatingService", "无授权缓存，弹出系统录屏授权对话框。")
+                    val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    }
+                    startActivity(startActIntent)
                 }
-                startActivity(startActIntent)
             }
             ACTION_TAKE_SCREENSHOT_RESULT -> {
-                // 截图第二步：获取到了用户授权的 Intent 数据，开始异步截图并保存
+                // 截图第二步：获取到用户授权的 Intent 数据后，先缓存再截图
                 val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
                 val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
                 if (resultCode != 0 && resultData != null) {
-                    // Android 10+ (API 29+) 强制要求在跨进程创建 MediaProjection 录屏时，前台服务必须已经升级绑定为 mediaProjection 类型
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        val notification = NotificationHelper.buildNotification(this)
-                        startForeground(
-                            NotificationHelper.NOTIFICATION_ID,
-                            notification,
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                        )
-                    }
-                    ScreenshotHelper.captureScreen(this, resultCode, resultData) { success ->
-                        // 截图完成后，将前台服务降级还原，释放媒体投影占用
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            val notification = NotificationHelper.buildNotification(this)
-                            startForeground(
-                                NotificationHelper.NOTIFICATION_ID,
-                                notification,
-                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                            )
-                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            val notification = NotificationHelper.buildNotification(this)
-                            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
-                        }
-                        // 截图完成或异常退出后，重新拉起悬浮球
-                        showFloatingWindow()
-                    }
+                    // 保存授权结果，后续截图可直接复用，无需再次弹窗
+                    ScreenshotCache.save(resultCode, resultData)
+                    performScreenCapture(resultCode, resultData)
                 } else {
                     showFloatingWindow()
                 }
@@ -163,8 +148,47 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     }
 
     /**
+     * 执行实际截图逻辑（供缓存命中和首次授权两个路径共用）
+     *
+     * 负责前台服务类型升级、调用截图工具、截图完成后降级并恢复悬浮球。
+     * 若授权已失效（Android 14+ 单次使用限制），自动清除缓存并提示用户重新授权。
+     */
+    private fun performScreenCapture(resultCode: Int, resultData: Intent) {
+        // Android 10+ 强制要求截图前将前台服务升级为 mediaProjection 类型
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val notification = NotificationHelper.buildNotification(this)
+            startForeground(
+                NotificationHelper.NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
+        }
+        ScreenshotHelper.captureScreen(this, resultCode, resultData) { success ->
+            if (!success) {
+                // 截图失败可能是因为旧的授权 Token 在 Android 14+ 上已单次失效，清除缓存
+                AppLogger.w("FloatingService", "截图失败，清除授权缓存，下次将重新请求授权。")
+                ScreenshotCache.clear()
+            }
+            // 截图完成后，将前台服务降级还原，释放媒体投影资源占用
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val notification = NotificationHelper.buildNotification(this)
+                startForeground(
+                    NotificationHelper.NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val notification = NotificationHelper.buildNotification(this)
+                startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+            }
+            // 截图完成或异常退出后，重新拉起悬浮球
+            showFloatingWindow()
+        }
+    }
+
+    /**
      * 初始化 WindowManager 布局参数
-     * 
+     *
      * 关键配置：
      * - TYPE_APPLICATION_OVERLAY：Android 8.0 之后统一的悬浮窗层级类型
      * - FLAG_NOT_FOCUSABLE：不能获取焦点，以避免拦截底层其他应用的软键盘输入与系统返回键
