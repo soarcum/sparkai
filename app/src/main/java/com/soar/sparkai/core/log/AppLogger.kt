@@ -36,8 +36,58 @@ object AppLogger {
             if (!isInitialized) {
                 LogFileAppender.init(context)
                 isInitialized = true
-                i("AppLogger", "SparkAI detailed logging system initialized successfully.")
+                i("AppLogger", "SparkAI 详细运行日志及诊断系统已成功初始化。")
+                
+                // 异步回填本地历史日志文件，确保打开日志控制台时记录不丢失
+                kotlin.concurrent.thread(start = true) {
+                    restoreLogsFromFile()
+                }
             }
+        }
+    }
+
+    /**
+     * 核心算法：读取本地磁盘日志文件并进行高宽容度正则反序列化，填回内存 Flow 缓存中，并完美归纳跨行崩溃堆栈
+     */
+    private fun restoreLogsFromFile() {
+        try {
+            val rawLogs = LogFileAppender.getInstance().readAllLogs()
+            if (rawLogs.isBlank() || rawLogs.startsWith("No logs") || rawLogs.startsWith("Failed to") || rawLogs.startsWith("暂无")) return
+
+            val lines = rawLogs.lines()
+            val parsedEntries = mutableListOf<LogEntry>()
+            // 匹配格式: 2026-05-27 10:49:56.123 [INFO] [MainActivity] 消息内容
+            val regex = """^(\d{4}-\d{2}-\d{2} )?(\d{2}:\d{2}:\d{2}\.\d{3}) \[([A-Z]+)\] \[([^\]]+)\] (.*)$""".toRegex()
+
+            for (line in lines) {
+                if (line.isBlank()) continue
+                val matchResult = regex.matchEntire(line)
+                if (matchResult != null) {
+                    val timestamp = matchResult.groupValues[2]
+                    val level = matchResult.groupValues[3]
+                    val tag = matchResult.groupValues[4]
+                    val message = matchResult.groupValues[5]
+                    parsedEntries.add(LogEntry(timestamp, level, tag, message))
+                } else {
+                    // 对于换行的异常栈信息，自动将其合并归纳到上一条主日志的消息体中
+                    if (parsedEntries.isNotEmpty()) {
+                        val last = parsedEntries.last()
+                        parsedEntries[parsedEntries.size - 1] = last.copy(message = last.message + "\n" + line)
+                    }
+                }
+            }
+
+            // 仅在内存保留最新的 200 条
+            val subList = if (parsedEntries.size > 200) {
+                parsedEntries.subList(parsedEntries.size - 200, parsedEntries.size)
+            } else {
+                parsedEntries
+            }
+
+            _logsFlow.value = subList
+            i("AppLogger", "已从本地日志文件成功回显并恢复了 ${subList.size} 条历史交互记录。")
+        } catch (e: Exception) {
+            android.util.Log.e("AppLogger", "Failed to restore logs from local disk: ${e.message}")
         }
     }
 

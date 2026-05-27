@@ -104,7 +104,7 @@ fun FloatingWidget(
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onTap = {
-                                AppLogger.i("FloatingWidget", "Colorful float ball tapped. Expanding assistant panel.")
+                                AppLogger.i("FloatingWidget", "炫彩悬浮球被轻点，正在优雅展开快捷助理面板。")
                                 // 专门捕获原地高灵敏轻触，瞬间优雅展开
                                 isExpanded = true
                             }
@@ -182,7 +182,7 @@ fun FloatingWidget(
                                     interactionSource = interactionSource,
                                     indication = null
                                 ) {
-                                    AppLogger.i("FloatingWidget", "Collapse chevron icon clicked. Contracting panel.")
+                                    AppLogger.i("FloatingWidget", "折叠快捷图标被点击，正在将面板收折回悬浮球。")
                                     isExpanded = false
                                     // 点击折叠后，再次检测一次吸边以防重叠
                                     onDragEnd()
@@ -204,7 +204,7 @@ fun FloatingWidget(
                             backgroundColor = Color(0xFF6C5CE7).copy(alpha = 0.2f),
                             tint = Color(0xFFA8A3FF),
                             onClick = {
-                                AppLogger.i("FloatingWidget", "Action: Screenshot button clicked.")
+                                AppLogger.i("FloatingWidget", "功能触发：用户点击了“截图”按键。")
                                 isExpanded = false
                                 onActionScreenshot()
                             }
@@ -217,7 +217,7 @@ fun FloatingWidget(
                             backgroundColor = Color(0xFF00B894).copy(alpha = 0.2f),
                             tint = Color(0xFF55EFC4),
                             onClick = {
-                                AppLogger.i("FloatingWidget", "Action: Return to Home button clicked.")
+                                AppLogger.i("FloatingWidget", "功能触发：用户点击了“主页”按键，返回主界面。")
                                 onActionBackToApp()
                             }
                         )
@@ -229,7 +229,7 @@ fun FloatingWidget(
                             backgroundColor = Color(0xFFD63031).copy(alpha = 0.2f),
                             tint = Color(0xFFFF7675),
                             onClick = {
-                                AppLogger.i("FloatingWidget", "Action: Stop and Exit button clicked.")
+                                AppLogger.i("FloatingWidget", "功能触发：用户点击了“退出”按键，正在注销悬浮服务。")
                                 onActionClose()
                             }
                         )

@@ -87,7 +87,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
 
-        AppLogger.i("FloatingService", "FloatingService created. System overlay windows initializing.")
+        AppLogger.i("FloatingService", "悬浮服务已创建 (onCreate)，正在初始化系统级悬浮窗口。")
 
         // 3. 初始化窗口管理器和布局参数
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -101,7 +101,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         val action = intent?.action ?: ACTION_START
 
-        AppLogger.i("FloatingService", "onStartCommand invocation with action: $action")
+        AppLogger.i("FloatingService", "收到前台服务启动指令 (onStartCommand)，动作类型: $action")
 
         when (action) {
             ACTION_START -> {
@@ -265,7 +265,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             screenWidth - viewWidth
         }
 
-        AppLogger.i("FloatingService", "Snap animation triggered. Current X: ${layoutParams.x}, target X: $targetX")
+        AppLogger.i("FloatingService", "悬浮球智能吸边动画触发。当前 X: ${layoutParams.x}，目标 X: $targetX")
 
         // 使用属性动画进行平滑的平移过渡
         val animator = ValueAnimator.ofInt(layoutParams.x, targetX).apply {
@@ -284,7 +284,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      */
     private fun hideFloatingWindow() {
         if (::composeView.isInitialized && composeView.parent != null) {
-            AppLogger.i("FloatingService", "Hiding floating window. Visibility -> GONE")
+            AppLogger.i("FloatingService", "隐藏悬浮窗口。状态 -> 不可见 (GONE)")
             composeView.visibility = View.GONE
         }
     }
@@ -295,17 +295,17 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     private fun showFloatingWindow() {
         if (::composeView.isInitialized) {
             if (composeView.parent == null) {
-                AppLogger.i("FloatingService", "Mounting compose floating window to WindowManager.")
+                AppLogger.i("FloatingService", "初次挂载 Compose 悬浮卡片视图到系统窗口层。")
                 windowManager.addView(composeView, layoutParams)
             } else {
-                AppLogger.i("FloatingService", "Showing floating window. Visibility -> VISIBLE")
+                AppLogger.i("FloatingService", "显示悬浮球。状态 -> 可见 (VISIBLE)")
                 composeView.visibility = View.VISIBLE
             }
         }
     }
 
     override fun onDestroy() {
-        AppLogger.i("FloatingService", "FloatingService is destroying. Releasing overlay windows.")
+        AppLogger.i("FloatingService", "前台服务即将销毁 (onDestroy)，正在释放悬浮窗及系统窗口资源。")
         isServiceRunning = false
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         // 销毁时清理挂载的窗口，释放内存，避免 Activity/Service 泄漏

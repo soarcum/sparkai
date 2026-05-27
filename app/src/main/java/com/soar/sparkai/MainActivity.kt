@@ -19,7 +19,7 @@ class MainActivity : ComponentActivity() {
 
         GlobalExceptionHandler.register(this)
         AppLogger.init(this)
-        AppLogger.i("MainActivity", "SparkAI application launched, system services initialized.")
+        AppLogger.i("MainActivity", "SparkAI 应用已成功启动，系统全局日志及相关服务初始化完毕。")
 
         setContent {
             AppTheme {

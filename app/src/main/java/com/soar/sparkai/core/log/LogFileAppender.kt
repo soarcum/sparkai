@@ -60,9 +60,9 @@ class LogFileAppender private constructor(context: Context) {
      */
     fun readAllLogs(): String {
         return try {
-            if (logFile.exists()) logFile.readText() else "No logs recorded yet."
+            if (logFile.exists()) logFile.readText() else "暂无本地持久化日志记录。"
         } catch (e: Exception) {
-            "Failed to read logs: ${e.message}"
+            "读取本地日志文件失败: ${e.message}"
         }
     }
 
@@ -91,7 +91,7 @@ class LogFileAppender private constructor(context: Context) {
             logFile.createNewFile()
             FileOutputStream(logFile, true).use { fos ->
                 PrintWriter(fos).use { writer ->
-                    writer.println("${timeFormat.format(Date())} [INFO] [LogFileAppender] Log file size exceeded limit. Autocleaned & restarted.")
+                    writer.println("${timeFormat.format(Date())} [INFO] [LogFileAppender] 日志文件大小超过 2MB 上限限制。系统已自动清理，并开启全新日志记录。")
                 }
             }
         } else if (!logFile.exists()) {

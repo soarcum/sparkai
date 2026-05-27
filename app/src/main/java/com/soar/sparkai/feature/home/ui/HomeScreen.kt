@@ -181,20 +181,20 @@ fun HomeScreen() {
                         Switch(
                             checked = isServiceActive,
                             onCheckedChange = { isChecked ->
-                                AppLogger.i("HomeScreen", "User toggled floating assistant switch -> $isChecked")
+                                AppLogger.i("HomeScreen", "用户将常驻助手开关切换为 -> $isChecked")
                                 if (isChecked) {
                                     // 检查系统悬浮窗权限
                                     if (Settings.canDrawOverlays(context)) {
-                                        AppLogger.i("HomeScreen", "Overlay permission validated. Starting FloatingService.")
+                                        AppLogger.i("HomeScreen", "系统悬浮窗权限校验通过，正在启动前台悬浮服务。")
                                         startFloatingService(context)
                                         isServiceActive = true
                                     } else {
-                                        AppLogger.w("HomeScreen", "Overlay permission missing! Prompting authorization dialog.")
+                                        AppLogger.w("HomeScreen", "未检测到悬浮窗权限！弹出授权引导对话框。")
                                         // 无权限则展示高颜值引导弹窗
                                         showPermissionDialog = true
                                     }
                                 } else {
-                                    AppLogger.i("HomeScreen", "Stopping FloatingService.")
+                                    AppLogger.i("HomeScreen", "用户主动关闭开关，正在停止并注销前台悬浮服务。")
                                     stopFloatingService(context)
                                     isServiceActive = false
                                 }
@@ -252,7 +252,7 @@ fun HomeScreen() {
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = {
-                            AppLogger.i("HomeScreen", "User requested real-time logging terminal.")
+                            AppLogger.i("HomeScreen", "用户请求开启实时运行日志控制台。")
                             val intent = Intent(context, com.soar.sparkai.core.log.LogDisplayActivity::class.java)
                             context.startActivity(intent)
                         },
@@ -302,7 +302,7 @@ fun HomeScreen() {
                 confirmButton = {
                     Button(
                         onClick = {
-                            AppLogger.i("HomeScreen", "Redirecting user to system draw-overlay permissions page.")
+                            AppLogger.i("HomeScreen", "引导去授权：正在重定向用户至系统的悬浮窗（显示在其他应用上层）设置页。")
                             showPermissionDialog = false
                             // 跳转至系统悬浮窗权限配置界面
                             try {
@@ -312,7 +312,7 @@ fun HomeScreen() {
                                 )
                                 context.startActivity(intent)
                             } catch (e: Exception) {
-                                AppLogger.e("HomeScreen", "Failed to target specific setting overlay package.", e)
+                                AppLogger.e("HomeScreen", "重定向特定包名的悬浮窗配置失败，尝试打开全局悬浮窗配置列表。", e)
                                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                                 context.startActivity(intent)
                             }
