@@ -55,15 +55,17 @@ class CrashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val crashInfo = intent.getStringExtra(EXTRA_CRASH_INFO) ?: "No crash info available"
-        val threadName = intent.getStringExtra(EXTRA_THREAD_NAME) ?: "Unknown"
+        val rawCrashInfo = intent.getStringExtra(EXTRA_CRASH_INFO) ?: "暂无详细的崩溃信息记录"
+        // 核心过滤算法：去粗取精，自动滤除底层冗长系统堆栈
+        val crashInfo = filterStackTrace(rawCrashInfo)
+        val threadName = intent.getStringExtra(EXTRA_THREAD_NAME) ?: "未知"
 
         val deviceInfo = """
-            -- Device Info --
-            Package: $packageName
-            Android: ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})
-            Device: ${Build.MANUFACTURER} ${Build.MODEL}
-            Thread: $threadName
+            -- 诊断设备信息 --
+            应用包名: $packageName
+            安卓版本: Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})
+            硬件设备: ${Build.MANUFACTURER} ${Build.MODEL}
+            异常线程: $threadName 线程
             ----------------
         """.trimIndent()
 
@@ -99,13 +101,13 @@ class CrashActivity : ComponentActivity() {
                 .padding(20.dp)
         ) {
             Text(
-                text = "Application Crashed",
+                text = "应用程序不幸崩溃",
                 style = MaterialTheme.typography.titleLarge,
                 color = Color(0xFFEF5350)
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "An unexpected error occurred. See the crash log below:",
+                text = "发生了一个预料之外的系统错误。请参阅下方的详细崩溃日志与诊断报告：",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
                 fontSize = 14.sp
@@ -148,9 +150,9 @@ class CrashActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray)
                 ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy")
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "复制")
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "Copy", fontSize = 13.sp)
+                    Text(text = "复制日志", fontSize = 12.sp)
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -160,9 +162,9 @@ class CrashActivity : ComponentActivity() {
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.LightGray)
                 ) {
-                    Icon(imageVector = Icons.Default.Share, contentDescription = "Share")
+                    Icon(imageVector = Icons.Default.Share, contentDescription = "分享")
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "Share", fontSize = 13.sp)
+                    Text(text = "分享报告", fontSize = 12.sp)
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -172,9 +174,9 @@ class CrashActivity : ComponentActivity() {
                     modifier = Modifier.weight(1.2f),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Restart")
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "重启")
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "Restart", fontSize = 13.sp)
+                    Text(text = "重新启动", fontSize = 12.sp)
                 }
             }
         }
@@ -182,9 +184,9 @@ class CrashActivity : ComponentActivity() {
 
     private fun copyToClipboard(text: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("Crash Report", text)
+        val clip = ClipData.newPlainText("崩溃诊断日志", text)
         clipboard.setPrimaryClip(clip)
-        Toast.makeText(this, "Crash log copied to clipboard", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "崩溃诊断日志已成功复制到剪贴板", Toast.LENGTH_SHORT).show()
     }
 
     private fun shareReport(text: String) {
@@ -192,7 +194,7 @@ class CrashActivity : ComponentActivity() {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        startActivity(Intent.createChooser(intent, "Share crash log"))
+        startActivity(Intent.createChooser(intent, "分享崩溃诊断日志"))
     }
 
     private fun restartApp() {
@@ -203,5 +205,33 @@ class CrashActivity : ComponentActivity() {
             startActivity(intent)
         }
         finish()
+    }
+
+    /**
+     * 智能堆栈过滤器：自动剔除 Android VM/框架 底层反射及受精卵线程的冗长系统级日志，
+     * 提炼并高亮呈现最宝贵的业务出错代码行与根本原因。
+     */
+    private fun filterStackTrace(rawInfo: String): String {
+        val lines = rawInfo.lines()
+        val filteredLines = mutableListOf<String>()
+        
+        for (line in lines) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) continue
+            
+            // 保留异常名称、根本因由(Caused by)以及应用自身业务相关的每一行堆栈
+            if (trimmed.startsWith("Caused by:") || 
+                trimmed.contains("com.soar.sparkai") || 
+                !trimmed.startsWith("at ")
+            ) {
+                filteredLines.add(line)
+            } else {
+                // 如果是连续的系统级冗长栈，我们只显示一个优雅的省略替代，提炼纯度
+                if (filteredLines.isNotEmpty() && filteredLines.last().trim() != "... [已过滤掉系统级底层冗余堆栈]") {
+                    filteredLines.add("    ... [已过滤掉系统级底层冗余堆栈]")
+                }
+            }
+        }
+        return filteredLines.joinToString("\n")
     }
 }

@@ -67,11 +67,19 @@ object ScreenshotHelper {
             return
         }
 
+        // 1.5 适配 Android 14 / 15 / 16 安全规范：启动屏幕截取前必须强制注册 Callback
+        val projectionCallback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+            }
+        }
+        mediaProjection.registerCallback(projectionCallback, mainHandler)
+
         // 2. 创建 ImageReader 来接收屏幕图像，RGBA_8888 格式最适合直接转 Bitmap
         val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
         
         // 3. 将屏幕内容映射到 ImageReader 的 Surface 上
-                val virtualDisplay = mediaProjection.createVirtualDisplay(
+        val virtualDisplay = mediaProjection.createVirtualDisplay(
             "SparkAIScreenCapture",
             width,
             height,
@@ -119,6 +127,7 @@ object ScreenshotHelper {
                 // 截图完成，必须释放虚拟屏幕和投影连接以节省内存和电量
                 virtualDisplay.release()
                 imageReader.close()
+                mediaProjection.unregisterCallback(projectionCallback)
                 mediaProjection.stop()
             }
 
