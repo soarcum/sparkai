@@ -51,6 +51,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.soar.sparkai.core.update.UpdateDialog
 import com.soar.sparkai.core.update.UpdateManager
+import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.service.FloatingService
 
 @Composable
@@ -180,16 +181,20 @@ fun HomeScreen() {
                         Switch(
                             checked = isServiceActive,
                             onCheckedChange = { isChecked ->
+                                AppLogger.i("HomeScreen", "User toggled floating assistant switch -> $isChecked")
                                 if (isChecked) {
                                     // 检查系统悬浮窗权限
                                     if (Settings.canDrawOverlays(context)) {
+                                        AppLogger.i("HomeScreen", "Overlay permission validated. Starting FloatingService.")
                                         startFloatingService(context)
                                         isServiceActive = true
                                     } else {
+                                        AppLogger.w("HomeScreen", "Overlay permission missing! Prompting authorization dialog.")
                                         // 无权限则展示高颜值引导弹窗
                                         showPermissionDialog = true
                                     }
                                 } else {
+                                    AppLogger.i("HomeScreen", "Stopping FloatingService.")
                                     stopFloatingService(context)
                                     isServiceActive = false
                                 }
@@ -212,6 +217,53 @@ fun HomeScreen() {
                         color = Color.White.copy(alpha = 0.6f),
                         lineHeight = 18.sp
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ================== ⚙ 高端诊断与日志系统卡片 ==================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E2F) // 深空灰色调
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "⚙ 诊断与日志中心",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "系统会详细记录手势轨迹、前台保活与截图状态。如果在测试过程中遇到点击无反应等疑问，可随时进入可视化控制台实时分析与诊断。",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            AppLogger.i("HomeScreen", "User requested real-time logging terminal.")
+                            val intent = Intent(context, com.soar.sparkai.core.log.LogDisplayActivity::class.java)
+                            context.startActivity(intent)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF00B894)
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text("查看实时运行日志", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
@@ -250,6 +302,7 @@ fun HomeScreen() {
                 confirmButton = {
                     Button(
                         onClick = {
+                            AppLogger.i("HomeScreen", "Redirecting user to system draw-overlay permissions page.")
                             showPermissionDialog = false
                             // 跳转至系统悬浮窗权限配置界面
                             try {
@@ -259,7 +312,7 @@ fun HomeScreen() {
                                 )
                                 context.startActivity(intent)
                             } catch (e: Exception) {
-                                e.printStackTrace()
+                                AppLogger.e("HomeScreen", "Failed to target specific setting overlay package.", e)
                                 val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                                 context.startActivity(intent)
                             }

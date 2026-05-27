@@ -22,6 +22,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.soar.sparkai.MainActivity
 import com.soar.sparkai.core.theme.AppTheme
+import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.ui.FloatingWidget
 import com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity
 import com.soar.sparkai.feature.floatwindow.util.NotificationHelper
@@ -86,6 +87,8 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
 
+        AppLogger.i("FloatingService", "FloatingService created. System overlay windows initializing.")
+
         // 3. 初始化窗口管理器和布局参数
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         initLayoutParams()
@@ -97,6 +100,8 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         val action = intent?.action ?: ACTION_START
+
+        AppLogger.i("FloatingService", "onStartCommand invocation with action: $action")
 
         when (action) {
             ACTION_START -> {
@@ -260,6 +265,8 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             screenWidth - viewWidth
         }
 
+        AppLogger.i("FloatingService", "Snap animation triggered. Current X: ${layoutParams.x}, target X: $targetX")
+
         // 使用属性动画进行平滑的平移过渡
         val animator = ValueAnimator.ofInt(layoutParams.x, targetX).apply {
             duration = 300
@@ -277,6 +284,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      */
     private fun hideFloatingWindow() {
         if (::composeView.isInitialized && composeView.parent != null) {
+            AppLogger.i("FloatingService", "Hiding floating window. Visibility -> GONE")
             composeView.visibility = View.GONE
         }
     }
@@ -287,14 +295,17 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
     private fun showFloatingWindow() {
         if (::composeView.isInitialized) {
             if (composeView.parent == null) {
+                AppLogger.i("FloatingService", "Mounting compose floating window to WindowManager.")
                 windowManager.addView(composeView, layoutParams)
             } else {
+                AppLogger.i("FloatingService", "Showing floating window. Visibility -> VISIBLE")
                 composeView.visibility = View.VISIBLE
             }
         }
     }
 
     override fun onDestroy() {
+        AppLogger.i("FloatingService", "FloatingService is destroying. Releasing overlay windows.")
         isServiceRunning = false
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         // 销毁时清理挂载的窗口，释放内存，避免 Activity/Service 泄漏
