@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -246,7 +247,8 @@ fun ActionButton(
     onClick: () -> Unit
 ) {
     // 处理按压交互的动画缩放效果，呈现完美下沉触感
-    var isPressed by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) 0.9f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessHigh),
@@ -257,17 +259,8 @@ fun ActionButton(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .scale(scale)
-            .pointerInput(Unit) {
-                // 自定义触觉响应逻辑
-                detectDragGestures(
-                    onDragStart = { isPressed = true },
-                    onDragEnd = { isPressed = false },
-                    onDragCancel = { isPressed = false },
-                    onDrag = { _, _ -> }
-                )
-            }
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interactionSource,
                 indication = null
             ) {
                 onClick()
