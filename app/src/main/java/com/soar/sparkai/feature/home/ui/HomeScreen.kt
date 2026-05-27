@@ -106,6 +106,12 @@ fun HomeScreen() {
                 fontSize = 14.sp,
                 color = Color.White.copy(alpha = 0.5f)
             )
+            Text(
+                text = "当前版本 v${com.soar.sparkai.BuildConfig.VERSION_NAME}",
+                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.4f),
+                modifier = Modifier.padding(top = 6.dp)
+            )
 
             Spacer(modifier = Modifier.height(48.dp))
 
@@ -263,6 +269,22 @@ fun HomeScreen() {
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
                         Text("查看实时运行日志", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Button(
+                        onClick = {
+                            AppLogger.i("HomeScreen", "用户手动触发在线自更新检测。")
+                            UpdateManager.checkUpdate(manual = true, context = context)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6C5CE7)
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text("在线检查新版本", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }

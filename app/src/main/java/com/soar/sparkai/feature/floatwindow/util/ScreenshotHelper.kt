@@ -41,6 +41,7 @@ object ScreenshotHelper {
     /**
      * 执行屏幕截图主逻辑
      * 
+     * 
      * @param context 上下文
      * @param imageReader 屏幕长连接读取管道
      * @param isFirstTime 是否为首次创建管道

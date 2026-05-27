@@ -71,17 +71,31 @@ object UpdateManager {
     /**
      * 执行版本检测
      */
-    fun checkUpdate() {
+    /**
+     * 执行版本检测
+     * @param manual 是否为手动触发（如果是手动触发，检测失败时会弹出具体的错误弹窗反馈，无更新时弹出 Toast 提示）
+     * @param context 手动模式下用来弹出 Toast 提示的上下文
+     */
+    fun checkUpdate(manual: Boolean = false, context: Context? = null) {
         val owner = BuildConfig.GITHUB_OWNER
         val repo = BuildConfig.GITHUB_REPO
 
         // 如果模板中的配置仍为占位符，说明尚未与GitHub仓库关联，直接跳过检测
         if (owner == "your-github-username" || repo == "your-repo-name" || owner.isBlank() || repo.isBlank()) {
             updateState = UpdateState.Idle
+            if (manual && context != null) {
+                CoroutineScope(Dispatchers.Main).launch {
+                    android.widget.Toast.makeText(context, "GitHub 仓库尚未关联配置，无法检查更新", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
             return
         }
 
         updateState = UpdateState.Checking
+        if (manual) {
+            showDialog = false // 手动检测时，如果已经在显示就先收起，检测完再决定是否弹出
+        }
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val url = URL("https://api.github.com/repos/$owner/$repo/releases/latest")
@@ -124,13 +138,26 @@ object UpdateManager {
                         showDialog = true
                     } else {
                         updateState = UpdateState.NoUpdate
+                        if (manual && context != null) {
+                            CoroutineScope(Dispatchers.Main).launch {
+                                android.widget.Toast.makeText(context, "当前已是最新版本 (v$currentVersion)", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 } else {
-                    updateState = UpdateState.Error("检测失败，状态码: $responseCode")
+                    val errMsg = "检测失败，GitHub 返回状态码: $responseCode"
+                    updateState = UpdateState.Error(errMsg)
+                    if (manual) {
+                        showDialog = true // 手动检查时弹出错误面板，展示具体原因
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                updateState = UpdateState.Error("检测更新时网络异常: ${e.localizedMessage}")
+                val netErrMsg = "检测更新网络异常（GitHub API 访问超时，国内直连可能受阻）: ${e.localizedMessage}"
+                updateState = UpdateState.Error(netErrMsg)
+                if (manual) {
+                    showDialog = true // 手动检查时强制弹出错误面板，让用户知晓具体原因
+                }
             }
         }
     }

@@ -234,6 +234,14 @@ fun FloatingWidget(
                             }
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = "当前版本 v${com.soar.sparkai.BuildConfig.VERSION_NAME}",
+                        color = Color.White.copy(alpha = 0.35f),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Normal
+                    )
                 }
             }
         }
