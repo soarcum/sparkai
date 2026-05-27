@@ -5,6 +5,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.util.DisplayMetrics
@@ -70,7 +71,15 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         isServiceRunning = true
         // 1. 声明并注册前台服务通知，以符合 Android 保活要求
         val notification = NotificationHelper.buildNotification(this)
-        startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NotificationHelper.NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+        }
 
         // 2. 初始化生命周期和状态恢复组件，使 Compose 能够在 Service 级别正常渲染
         lifecycleRegistry.currentState = Lifecycle.State.INITIALIZED
@@ -113,12 +122,19 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                         startForeground(
                             NotificationHelper.NOTIFICATION_ID,
                             notification,
-                            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
                         )
                     }
                     ScreenshotHelper.captureScreen(this, resultCode, resultData) { success ->
-                        // 截图完成后，将前台服务降级还原为普通默认服务，释放媒体投影占用
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        // 截图完成后，将前台服务降级还原，释放媒体投影占用
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            val notification = NotificationHelper.buildNotification(this)
+                            startForeground(
+                                NotificationHelper.NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                            )
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             val notification = NotificationHelper.buildNotification(this)
                             startForeground(NotificationHelper.NOTIFICATION_ID, notification)
                         }
