@@ -110,22 +110,23 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      * 初始化常驻投屏长连接流水线（ImageReader & VirtualDisplay）
      */
     private fun initProjectionPipeline(projection: MediaProjection): Boolean {
+        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 进入 initProjectionPipeline，开始构建投屏流水线管道...")
         return try {
             mediaProjection = projection
             setupMediaProjectionCallback(projection)
 
-            // 获取真实的物理屏幕大小以确保截图比例正确
             val metrics = DisplayMetrics()
             windowManager.defaultDisplay.getRealMetrics(metrics)
             val width = metrics.widthPixels
             val height = metrics.heightPixels
             val dpi = metrics.densityDpi
+            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 获取物理屏幕尺寸成功: width=$width, height=$height, dpi=$dpi")
 
-            // 创建全局唯一的 ImageReader，使用 RGBA_8888 格式
+            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 正在创建 ImageReader 实例 (RGBA_8888)...")
             val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             imageReader = reader
 
-            // 将屏幕内容映射到 ImageReader 的 Surface 上并常驻
+            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 正在调用 projection.createVirtualDisplay 创建虚拟显示，将屏幕图像投射至 Surface...")
             val display = projection.createVirtualDisplay(
                 "SparkAIScreenCapture",
                 width,
@@ -137,10 +138,13 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 null
             )
             virtualDisplay = display
-            AppLogger.i("FloatingService", "已成功建立全局屏幕投屏长连接流水线（ImageReader & VirtualDisplay 开启常驻）。")
+            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 已成功建立全局屏幕投屏长连接流水线（VirtualDisplay 开启常驻）。")
             true
+        } catch (e: SecurityException) {
+            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] createVirtualDisplay 抛出安全异常(SecurityException)！可能是前台服务类型在底层注册未生效，或授权失效。异常原因: ${e.message}", e)
+            false
         } catch (e: Exception) {
-            AppLogger.e("FloatingService", "建立全局投屏流水线时发生崩溃: ${e.message}", e)
+            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 建立全局投屏流水线时发生未知崩溃: ${e.message}", e)
             false
         }
     }
@@ -235,21 +239,74 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 }
             }
             ACTION_TAKE_SCREENSHOT_RESULT -> {
-                // 截图第二步：获取到用户授权的 Intent 数据后，初始化常驻投屏长连接流水线并执行截图
+                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 收到屏幕截图授权回调 ACTION_TAKE_SCREENSHOT_RESULT。")
                 val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
                 val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 授权参数解析: resultCode=$resultCode, hasResultData=${resultData != null}")
+                
                 if (resultCode != 0 && resultData != null) {
-                    // 保存授权结果，后续截图可直接复用，无需再次弹窗
                     ScreenshotCache.save(resultCode, resultData)
-                    val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                    val projection = projectionManager.getMediaProjection(resultCode, resultData)
-                    if (projection != null && initProjectionPipeline(projection)) {
-                        performFastScreenCapture(isFirstTime = true)
-                    } else {
-                        AppLogger.e("FloatingService", "授权成功，但初始化全局投屏长连接管道失败。")
+                    
+                    try {
+                        // 核心时序修复：必须在调用 getMediaProjection 之前，将前台服务类型升级为 mediaProjection 复合状态！
+                        // 否则在 Android 14+ / 16 (API 36) 中，若服务未获得此类型资质而直接调用 getMediaProjection，系统会瞬间抛出 SecurityException 崩溃！
+                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 1: 正在提升前台服务类型为 mediaProjection|specialUse...")
+                        val notification = NotificationHelper.buildNotification(this)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            startForeground(
+                                NotificationHelper.NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            )
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            startForeground(
+                                NotificationHelper.NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            )
+                        } else {
+                            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+                        }
+                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 1 完成: 前台服务提升成功。")
+
+                        // 步骤 2：通过系统服务获取 MediaProjection 实例
+                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 2: 正在通过系统服务获取 MediaProjection 实例...")
+                        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        val projection = projectionManager.getMediaProjection(resultCode, resultData)
+                        
+                        if (projection != null) {
+                            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 2 完成: 成功创建 MediaProjection 实例。")
+                            
+                            // 步骤 3：建立投屏长连接管道
+                            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 3: 正在初始化投屏常驻管道...")
+                            if (initProjectionPipeline(projection)) {
+                                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 3 完成: 常驻管道建立成功。开始后台抓帧。")
+                                performFastScreenCapture(isFirstTime = true)
+                            } else {
+                                AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 错误: 常驻管道初始化失败！")
+                                android.widget.Toast.makeText(this, "[SparkAI] 截图常驻管道建立失败，请重试", android.widget.Toast.LENGTH_LONG).show()
+                                showFloatingWindow()
+                            }
+                        } else {
+                            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 错误: 系统返回的 MediaProjection 为 null！")
+                            android.widget.Toast.makeText(this, "[SparkAI] 获取媒体投屏实例失败，请重新授权", android.widget.Toast.LENGTH_LONG).show()
+                            showFloatingWindow()
+                        }
+                    } catch (e: SecurityException) {
+                        val explanation = "【截图诊断崩溃排查 - 发生系统安全异常 SecurityException】\n" +
+                                "安卓版本: API ${Build.VERSION.SDK_INT}\n" +
+                                "错误原因: ${e.message}\n" +
+                                "可能原因: 清单文件中没有正确声明或动态获取 FOREGROUND_SERVICE_MEDIA_PROJECTION 权限，或是前台服务注册的 mediaProjection 属性尚未生效。"
+                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] $explanation", e)
+                        android.widget.Toast.makeText(this, "截图失败: 缺少媒体投屏特权，请查看日志详情", android.widget.Toast.LENGTH_LONG).show()
+                        showFloatingWindow()
+                    } catch (e: Exception) {
+                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 截图回调发生未知运行时异常: ${e.message}", e)
+                        android.widget.Toast.makeText(this, "截图失败: 运行时异常 ${e.message}", android.widget.Toast.LENGTH_LONG).show()
                         showFloatingWindow()
                     }
                 } else {
+                    AppLogger.w("FloatingService", "[SparkAI-Capture-v2] 授权参数不合规，拒绝截图。resultCode=$resultCode")
                     showFloatingWindow()
                 }
             }
@@ -270,36 +327,14 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      */
     private fun performFastScreenCapture(isFirstTime: Boolean) {
         val reader = imageReader ?: return
-        
-        // 只有在首次创建通道（或重新授权）时，才需要向系统申请升级为 mediaProjection 前台服务类型
-        if (isFirstTime && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val notification = NotificationHelper.buildNotification(this)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                // Android 14+ 推荐传入当前服务声明并使用的全部前台类型组合
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
-            } else {
-                startForeground(
-                    NotificationHelper.NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                )
-            }
-            AppLogger.i("FloatingService", "首次建立屏幕截图通道，已升级前台服务类型为 mediaProjection")
-        } else {
-            AppLogger.i("FloatingService", "复用现有投屏长连接管道进行静默截图，无须升级前台类型，跳过 startForeground 校验")
-        }
+        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 执行 performFastScreenCapture，准备后台抓取屏幕帧。isFirstTime=$isFirstTime")
         
         ScreenshotHelper.captureScreenFromPipeline(this, reader, isFirstTime) { success ->
-            if (!success) {
-                AppLogger.w("FloatingService", "极速静默截图执行失败。")
+            if (success) {
+                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 极速静默截图执行成功，图片已成功写入相册。")
+            } else {
+                AppLogger.w("FloatingService", "[SparkAI-Capture-v2] 极速静默截图执行失败。请查看 ScreenshotHelper 打印日志排查存储或通道异常。")
             }
-            // 注意：此处不再主动降级前台服务！保持前台服务以 mediaProjection 状态运行，
-            // 从而使后继截图可直接静默复用管道而绝对不触发系统的 FGS 时序安全校验。
-            
             // 重新拉起悬浮球
             showFloatingWindow()
         }
