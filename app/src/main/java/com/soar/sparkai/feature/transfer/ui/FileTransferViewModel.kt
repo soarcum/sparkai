@@ -64,7 +64,7 @@ class FileTransferViewModel : ViewModel() {
     fun uploadSelectedFile(context: Context, uri: Uri) {
         val filename = getFileName(context, uri)
         val size = getFileSize(context, uri)
-        val taskId = Math.random().toString(36).substring(2, 10)
+        val taskId = (Math.random() * Int.MAX_VALUE).toInt().toString(36).substring(2, 10)
         
         val newItem = TransferItem(
             id = taskId,
