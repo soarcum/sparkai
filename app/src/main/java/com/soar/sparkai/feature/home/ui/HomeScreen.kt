@@ -4,6 +4,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,16 +55,24 @@ import com.soar.sparkai.core.update.UpdateDialog
 import com.soar.sparkai.core.update.UpdateManager
 import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.service.FloatingService
+import com.soar.sparkai.feature.transfer.ui.FileTransferScreen
 
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    var currentScreen by remember { mutableStateOf("home") }
+
     // 悬浮服务实际运行状态
     var isServiceActive by remember { mutableStateOf(FloatingService.isServiceRunning) }
     // 悬浮窗权限说明弹窗控制
     var showPermissionDialog by remember { mutableStateOf(false) }
+
+    if (currentScreen == "transfer") {
+        FileTransferScreen(onBack = { currentScreen = "home" })
+        return
+    }
 
     // 监听应用前后台切换，从系统设置返回时能够立即感知并刷新状态
     DisposableEffect(lifecycleOwner) {
@@ -91,7 +101,8 @@ fun HomeScreen() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(24.dp)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -223,6 +234,52 @@ fun HomeScreen() {
                         color = Color.White.copy(alpha = 0.6f),
                         lineHeight = 18.sp
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ================== 📂 局域网高速互传中心卡片 ==================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E2F)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "📂 局域网高速互传中心",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "无需任何 USB 数据线，即可与 SparkAI 桌面端建立局域网安全数据通道。一键向电脑端推送手机照片与文件，亦可实时接收来自电脑发来的要约与多媒体素材。",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            AppLogger.i("HomeScreen", "用户进入局域网高速文件互传界面。")
+                            currentScreen = "transfer"
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6C5CE7)
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text("进入文件传输控制台", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
 

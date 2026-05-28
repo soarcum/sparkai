@@ -1,0 +1,51 @@
+name: Build Windows Desktop EXE
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'sparkai-desktop/**'
+      - '.github/workflows/build-desktop.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-size: 20
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Desktop Dependencies
+        working-directory: ./sparkai-desktop
+        run: bun install
+
+      - name: Build and Package EXE
+        working-directory: ./sparkai-desktop
+        run: bun run build:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SparkAI-Windows-Installer
+          path: sparkai-desktop/output-prod/SparkAI-Setup-*.exe
+
+      - name: Upload Portable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SparkAI-Windows-Portable
+          path: sparkai-desktop/output-prod/SparkAI-*.exe
