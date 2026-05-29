@@ -42,8 +42,16 @@ object FileTransferManager {
         port: Int,
         onOfferReceived: (id: String, name: String, size: Long) -> Unit,
         onTextOfferReceived: (id: String, text: String, isUrl: Boolean) -> Unit,
-        onStatusChanged: (connected: Boolean) -> Unit
+        onStatusChanged: (connected: Boolean) -> Unit,
+        onError: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
+        // 先对 IP 地址格式做一个基本校验
+        if (ip.isBlank() || ip.endsWith(".") || ip.split(".").size != 4) {
+            onError("IP 地址格式不正确")
+            onStatusChanged(false)
+            return@withContext
+        }
+
         val url = "http://$ip:$port/events"
         val request = Request.Builder().url(url).build()
         sseCall = client.newCall(request)
@@ -52,10 +60,14 @@ object FileTransferManager {
             sseCall?.execute()?.use { response ->
                 if (!response.isSuccessful) {
                     onStatusChanged(false)
+                    onError("服务器返回错误代码: ${response.code}")
                     return@use
                 }
                 onStatusChanged(true)
-                val reader = response.body?.charStream()?.buffered() ?: return@use
+                val reader = response.body?.charStream()?.buffered() ?: run {
+                    onError("响应数据为空")
+                    return@use
+                }
                 var line: String?
                 var currentEvent = ""
 
@@ -86,6 +98,15 @@ object FileTransferManager {
             }
         } catch (e: Exception) {
             AppLogger.e("FileTransferManager", "SSE 长连接发生异常被动断开: ${e.message}")
+            val msg = e.message ?: "未知网络错误"
+            val friendlyMsg = when {
+                msg.contains("Permission denied", ignoreCase = true) -> "无网络访问权限"
+                msg.contains("Connection refused", ignoreCase = true) -> "连接被拒绝，请确认电脑端是否已启动互传服务"
+                msg.contains("timeout", ignoreCase = true) -> "连接超时，请检查局域网Wi-Fi是否畅通，或确认电脑端 IP 与端口正确"
+                msg.contains("route to host", ignoreCase = true) -> "无法到达主机，请确认手机与电脑在同一个局域网Wi-Fi下"
+                else -> msg
+            }
+            onError(friendlyMsg)
         } finally {
             onStatusChanged(false)
         }

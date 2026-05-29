@@ -36,6 +36,7 @@ class FileTransferViewModel : ViewModel() {
     var ip by mutableStateOf("192.168.1.")
     var port by mutableStateOf("9090")
     var isConnected by mutableStateOf(false)
+    var isConnecting by mutableStateOf(false)
     var transferList by mutableStateOf<List<TransferItem>>(emptyList())
     var activeOffer by mutableStateOf<TransferItem?>(null)
     var isAudioStreaming by mutableStateOf(false)
@@ -45,20 +46,31 @@ class FileTransferViewModel : ViewModel() {
 
     // 建立局域网长连接
     fun connect(context: Context) {
-        if (isConnected) return
+        if (isConnected || isConnecting) return
+        
+        // 本地前置校验，防止诸如 "192.168.1." 的半成品 IP 发起网络连接
+        val trimmedIp = ip.trim()
+        if (trimmedIp.isBlank() || trimmedIp.endsWith(".") || trimmedIp.split(".").size != 4) {
+            android.widget.Toast.makeText(context, "⚠️ 请输入完整的电脑 IP 地址", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isConnecting = true
         connectionJob = viewModelScope.launch {
             FileTransferManager.startSSEConnection(
-                ip = ip.trim(),
+                ip = trimmedIp,
                 port = port.trim().toIntOrNull() ?: 9090,
                 onOfferReceived = { id, name, size ->
-                    activeOffer = TransferItem(
-                        id = id,
-                        name = name,
-                        size = size,
-                        type = TransferType.DOWNLOAD,
-                        status = TransferStatus.WAITING,
-                        timestamp = getCurrentTime()
-                    )
+                    viewModelScope.launch(Dispatchers.Main) {
+                        activeOffer = TransferItem(
+                            id = id,
+                            name = name,
+                            size = size,
+                            type = TransferType.DOWNLOAD,
+                            status = TransferStatus.WAITING,
+                            timestamp = getCurrentTime()
+                        )
+                    }
                 },
                 onTextOfferReceived = { id, text, isUrl ->
                     // 自动将接收到的文本写入手机系统剪贴板
@@ -83,10 +95,28 @@ class FileTransferViewModel : ViewModel() {
                         speed = "完成",
                         timestamp = getCurrentTime()
                     )
-                    transferList = listOf(newItem) + transferList
+                    viewModelScope.launch(Dispatchers.Main) {
+                        transferList = listOf(newItem) + transferList
+                    }
                 },
                 onStatusChanged = { connected ->
-                    isConnected = connected
+                    viewModelScope.launch(Dispatchers.Main) {
+                        isConnected = connected
+                        if (connected) {
+                            isConnecting = false
+                            // 成功连接，保存本次 IP 和端口
+                            saveLastConnection(context, trimmedIp, port.trim())
+                            android.widget.Toast.makeText(context, "🎉 桥接电脑端成功！", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            isConnecting = false
+                        }
+                    }
+                },
+                onError = { err ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        isConnecting = false
+                        android.widget.Toast.makeText(context, "❌ 连接失败: $err", android.widget.Toast.LENGTH_LONG).show()
+                    }
                 }
             )
         }
@@ -99,6 +129,7 @@ class FileTransferViewModel : ViewModel() {
         connectionJob?.cancel()
         connectionJob = null
         isConnected = false
+        isConnecting = false
     }
 
     // 启动手机麦克风流式投射到电脑
@@ -339,6 +370,37 @@ class FileTransferViewModel : ViewModel() {
         udpJob?.cancel()
         udpJob = null
         discoveredDevices = emptyList()
+    }
+
+    // 保存最后一次成功连接的 IP 和端口
+    private fun saveLastConnection(context: Context, ipStr: String, portStr: String) {
+        try {
+            val prefs = context.getSharedPreferences("sparkai_transfer_prefs", Context.MODE_PRIVATE)
+            prefs.edit().apply {
+                putString("last_connected_ip", ipStr)
+                putString("last_connected_port", portStr)
+                apply()
+            }
+        } catch (e: Exception) {
+            // 忽略
+        }
+    }
+
+    // 加载上一次成功连接的 IP 和端口
+    fun loadLastConnection(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences("sparkai_transfer_prefs", Context.MODE_PRIVATE)
+            val savedIp = prefs.getString("last_connected_ip", null)
+            val savedPort = prefs.getString("last_connected_port", null)
+            if (!savedIp.isNullOrBlank()) {
+                ip = savedIp
+            }
+            if (!savedPort.isNullOrBlank()) {
+                port = savedPort
+            }
+        } catch (e: Exception) {
+            // 忽略
+        }
     }
 
     override fun onCleared() {

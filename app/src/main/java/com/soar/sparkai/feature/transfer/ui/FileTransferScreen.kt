@@ -33,6 +33,11 @@ fun FileTransferScreen(
     viewModel: FileTransferViewModel = viewModel()
 ) {
     val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        viewModel.loadLastConnection(context)
+    }
+
     val pickFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -491,9 +496,15 @@ fun ConnectionCard(viewModel: FileTransferViewModel, onScanClick: () -> Unit) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text("电脑互传桥接器", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    val statusText = if (viewModel.isConnected) "通信在线 - 长连接已就绪"
+                                     else if (viewModel.isConnecting) "正在建立桥接通道，请稍候..."
+                                     else "未连接 - 请先开启电脑端引擎"
+                    val statusColor = if (viewModel.isConnected) Color(0xFF00B894)
+                                      else if (viewModel.isConnecting) Color(0xFFFFB800)
+                                      else Color.White.copy(alpha = 0.5f)
                     Text(
-                        text = if (viewModel.isConnected) "通信在线 - 长连接已就绪" else "未连接 - 请先开启电脑端引擎",
-                        color = if (viewModel.isConnected) Color(0xFF00B894) else Color.White.copy(alpha = 0.5f),
+                        text = statusText,
+                        color = statusColor,
                         fontSize = 12.sp
                     )
                 }
@@ -557,16 +568,29 @@ fun ConnectionCard(viewModel: FileTransferViewModel, onScanClick: () -> Unit) {
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            val buttonText = if (viewModel.isConnected) "断开局域网桥接" 
+                             else if (viewModel.isConnecting) "正在建立桥接连接..." 
+                             else "连接电脑端引擎"
+
             Button(
                 onClick = { if (viewModel.isConnected) viewModel.disconnect() else viewModel.connect(context) },
+                enabled = !viewModel.isConnecting || viewModel.isConnected,
                 modifier = Modifier.fillMaxWidth().height(46.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (viewModel.isConnected) Color(0xFFE94057) else Color(0xFF00B894)
                 )
             ) {
+                if (viewModel.isConnecting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text(
-                    text = if (viewModel.isConnected) "断开局域网桥接" else "连接电脑端引擎",
+                    text = buttonText,
                     color = Color.White,
                     fontWeight = FontWeight.Bold
                 )
