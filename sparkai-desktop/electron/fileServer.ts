@@ -12,23 +12,43 @@ if (!fs.existsSync(SAVE_DIR)) {
 }
 
 let server: http.Server | null = null
-let activePort = 9090
+let activePort = 19090
 const sseClients = new Set<http.ServerResponse>()
 // 待手机下载的文件池：ID -> { path, name, size }
 const downloadPool = new Map<string, { path: string; name: string; size: number }>()
 
-// 获取本机所有局域网 IPv4 地址
+// 获取本机所有局域网 IPv4 地址 (智能过滤并优先排序真实的物理网卡)
 export function getIPAddresses(): string[] {
   const interfaces = os.networkInterfaces()
-  const ips: string[] = []
+  const physicalIps: string[] = []
+  const virtualIps: string[] = []
+  
   for (const name of Object.keys(interfaces)) {
+    const lowerName = name.toLowerCase()
+    // 智能判别常见的虚拟网卡接口名称
+    const isVirtual = lowerName.includes('virtual') || 
+                      lowerName.includes('vmware') || 
+                      lowerName.includes('vbox') || 
+                      lowerName.includes('virtualbox') || 
+                      lowerName.includes('wsl') || 
+                      lowerName.includes('hyper-v') || 
+                      lowerName.includes('vethernet') ||
+                      lowerName.includes('host-only') ||
+                      lowerName.includes('tap') ||
+                      lowerName.includes('npcap')
+                      
     for (const net of interfaces[name] || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        ips.push(net.address)
+        if (isVirtual) {
+          virtualIps.push(net.address)
+        } else {
+          physicalIps.push(net.address)
+        }
       }
     }
   }
-  return ips
+  // 物理网卡 IP 排在最前，虚拟网卡 IP 垫后，确保首个 IP 为极高可达的局域网物理 IP
+  return [...physicalIps, ...virtualIps]
 }
 
 // 广播 SSE 事件给所有已连接的手机
@@ -211,6 +231,10 @@ export function registerFileOffer(filePath: string, name: string, size: number):
 
 // 启动局域网 HTTP + SSE 文件传输服务
 export function startFileServer(): Promise<number> {
+  if (server) {
+    // 智能防重入：如果服务器已启动，直接复用当前端口，防止 HMR 等二次调用造成端口不断累加顺延
+    return Promise.resolve(activePort)
+  }
   return new Promise((resolve, reject) => {
     server = http.createServer((req, res) => {
       const parsedUrl = new URL(req.url || '', `http://localhost:${activePort}`)

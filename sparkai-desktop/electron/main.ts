@@ -222,3 +222,8 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+
+app.on('will-quit', () => {
+  logPhys('[物理诊断] 应用程序准备退出 (will-quit)')
+  stopFileServer()
+})

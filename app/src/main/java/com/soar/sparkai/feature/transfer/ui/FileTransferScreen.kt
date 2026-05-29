@@ -416,7 +416,7 @@ fun FileTransferScreen(
                                         viewModel.connect(context)
                                     } else {
                                         viewModel.ip = result
-                                        viewModel.port = "9090"
+                                        viewModel.port = "19090"
                                         viewModel.connect(context)
                                     }
                                 }

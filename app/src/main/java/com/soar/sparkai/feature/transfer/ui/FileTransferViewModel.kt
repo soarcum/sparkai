@@ -34,7 +34,7 @@ data class DiscoveredDevice(
 class FileTransferViewModel : ViewModel() {
 
     var ip by mutableStateOf("192.168.1.")
-    var port by mutableStateOf("9090")
+    var port by mutableStateOf("19090")
     var isConnected by mutableStateOf(false)
     var isConnecting by mutableStateOf(false)
     var transferList by mutableStateOf<List<TransferItem>>(emptyList())
@@ -59,7 +59,7 @@ class FileTransferViewModel : ViewModel() {
         connectionJob = viewModelScope.launch {
             FileTransferManager.startSSEConnection(
                 ip = trimmedIp,
-                port = port.trim().toIntOrNull() ?: 9090,
+                port = port.trim().toIntOrNull() ?: 19090,
                 onOfferReceived = { id, name, size ->
                     viewModelScope.launch(Dispatchers.Main) {
                         activeOffer = TransferItem(
@@ -115,7 +115,12 @@ class FileTransferViewModel : ViewModel() {
                 onError = { err ->
                     viewModelScope.launch(Dispatchers.Main) {
                         isConnecting = false
-                        android.widget.Toast.makeText(context, "❌ 连接失败: $err", android.widget.Toast.LENGTH_LONG).show()
+                        val friendlyErr = if (err.contains("404") || err.contains("Not Found", ignoreCase = true)) {
+                            "连接失败 (404): 默认握手端口 19090 可能已被电脑上其他服务占用，导致请求到了错误的服务器。请检查电脑端面板显示的实际端口 (例如 19091) 并修改手机端的端口后重试。"
+                        } else {
+                            err
+                        }
+                        android.widget.Toast.makeText(context, "❌ 连接失败: $friendlyErr", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             )
@@ -138,7 +143,7 @@ class FileTransferViewModel : ViewModel() {
         audioJob = viewModelScope.launch {
             com.soar.sparkai.feature.audio.AudioStreamer.startStreaming(
                 ip = ip.trim(),
-                port = port.trim().toIntOrNull() ?: 9090,
+                port = port.trim().toIntOrNull() ?: 19090,
                 onSuccess = {
                     viewModelScope.launch(Dispatchers.Main) {
                         isAudioStreaming = true
@@ -184,7 +189,7 @@ class FileTransferViewModel : ViewModel() {
             FileTransferManager.uploadFile(
                 context = context,
                 ip = ip.trim(),
-                port = port.trim().toIntOrNull() ?: 9090,
+                port = port.trim().toIntOrNull() ?: 19090,
                 fileUri = uri,
                 onProgress = { progress ->
                     updateItemProgress(taskId, progress)
@@ -219,7 +224,7 @@ class FileTransferViewModel : ViewModel() {
         viewModelScope.launch {
             FileTransferManager.uploadText(
                 ip = ip.trim(),
-                port = port.trim().toIntOrNull() ?: 9090,
+                port = port.trim().toIntOrNull() ?: 19090,
                 text = text,
                 onSuccess = {
                     updateItemStatus(taskId, TransferStatus.SUCCESS)
@@ -242,7 +247,7 @@ class FileTransferViewModel : ViewModel() {
             FileTransferManager.downloadFile(
                 context = context,
                 ip = ip.trim(),
-                port = port.trim().toIntOrNull() ?: 9090,
+                port = port.trim().toIntOrNull() ?: 19090,
                 fileId = item.id,
                 filename = item.name,
                 totalSize = item.size,

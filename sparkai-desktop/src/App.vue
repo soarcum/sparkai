@@ -110,7 +110,12 @@
             <div class="p-5 rounded-2xl glass-panel flex flex-col items-center justify-center border border-brand-border min-h-[170px] relative overflow-hidden">
               <div class="relative z-10 flex flex-col items-center">
                 <canvas ref="overviewQrCanvas" class="w-24 h-24 bg-white/5 rounded-lg p-1 shadow-glow-cyan"></canvas>
-                <span class="text-[10px] text-brand-textMuted mt-2.5">手机扫码一键连接</span>
+                <!-- 智能网卡选择器 -->
+                <select v-if="ips.length > 1" v-model="selectedIp" @change="loadOverviewQRCode"
+                        class="text-[9px] bg-black/60 border border-white/10 rounded px-1.5 py-0.5 mt-2 text-brand-secondary outline-none cursor-pointer hover:bg-black/80 transition-colors">
+                  <option v-for="ip in ips" :key="ip" :value="ip">{{ ip }}</option>
+                </select>
+                <span class="text-[10px] text-brand-textMuted mt-2">手机扫码一键连接</span>
               </div>
               <div class="absolute -left-10 -bottom-10 w-24 h-24 bg-brand-secondary/5 rounded-full blur-3xl"></div>
             </div>
@@ -144,7 +149,7 @@
         <template v-else-if="currentTab === 2">
           <div class="p-6 rounded-2xl glass-panel border border-brand-border space-y-4">
             <h3 class="text-base font-bold text-white">⚙ 通信与代理参数配置</h3>
-            <p class="text-xs text-brand-textMuted">默认局域网握手端口为 9090。如遇端口冲突，系统将在后台自动递增匹配可用通信通道，无需手动修改任何参数。</p>
+            <p class="text-xs text-brand-textMuted">默认局域网握手端口为 19090。如遇端口冲突，系统将在后台自动递增匹配可用通信通道，无需手动修改任何参数。</p>
           </div>
         </template>
       </main>
@@ -179,13 +184,14 @@ const ShareIcon = shallowRef({
 
 const serverRunning = ref(false)
 const ips = ref<string[]>([])
-const port = ref(9090)
+const selectedIp = ref('')
+const port = ref(19090)
 const overviewQrCanvas = ref<HTMLCanvasElement | null>(null)
 
 const loadOverviewQRCode = () => {
   nextTick(() => {
-    if (overviewQrCanvas.value && ips.value.length > 0) {
-      const connectUrl = `http://${ips.value[0]}:${port.value}`
+    if (overviewQrCanvas.value && selectedIp.value) {
+      const connectUrl = `http://${selectedIp.value}:${port.value}`
       QRCode.toCanvas(overviewQrCanvas.value, connectUrl, {
         width: 96,
         margin: 1,
@@ -290,6 +296,7 @@ onMounted(async () => {
     if (res?.success) {
       serverRunning.value = true
       ips.value = res.ips
+      selectedIp.value = res.ips[0] || ''
       port.value = res.port
       addLog('SUCCESS', `局域网极速互传服务器启动成功！端口: ${res.port}`)
       loadOverviewQRCode()
