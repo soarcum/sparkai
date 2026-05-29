@@ -1,13 +1,6 @@
 name: Build Windows Desktop EXE
 
 on:
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - 'sparkai-desktop/**'
-      - '.github/workflows/build-desktop.yml'
   workflow_dispatch:
 
 jobs:
@@ -30,9 +23,6 @@ jobs:
       - name: Build Frontend
         working-directory: ./sparkai-desktop
         run: npx vite build
-
-      - name: Clear Electron Cache
-        run: rm -rf ~/.cache/electron ~/.cache/electron-builder
 
       - name: Package EXE
         working-directory: ./sparkai-desktop

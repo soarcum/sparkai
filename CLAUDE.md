@@ -63,3 +63,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## 5. 构建与发布策略
+
+**默认只打包 Android 端。桌面端打包需先询问用户。**
+
+- 执行 `.\bump_and_push.ps1` 时，默认只触发 Android CI/CD（tag push 触发）
+- 桌面端构建工作流（build-desktop.yml）已改为仅 `workflow_dispatch`（手动触发）
+- 如需打包桌面端，先询问用户确认，再手动触发工作流
+- 桌面端构建目前存在问题（electron-builder 在 CI 环境持续失败），需进一步排查
