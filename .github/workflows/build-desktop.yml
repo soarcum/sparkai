@@ -23,13 +23,25 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Desktop Dependencies
+      - name: Install Dependencies
         working-directory: ./sparkai-desktop
         run: npm install
 
-      - name: Build and Package EXE
+      - name: Build Frontend
         working-directory: ./sparkai-desktop
-        run: npm run build:win
+        run: npx vite build
+
+      - name: List Build Output
+        working-directory: ./sparkai-desktop
+        run: |
+          echo "=== dist ==="
+          dir dist
+          echo "=== dist-electron ==="
+          dir dist-electron
+
+      - name: Package EXE
+        working-directory: ./sparkai-desktop
+        run: npx electron-builder --win --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
