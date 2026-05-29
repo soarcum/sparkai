@@ -32,11 +32,16 @@ jobs:
         working-directory: ./sparkai-desktop
         run: bun install
 
-      - name: Build and Package EXE
+      - name: Build Vite
         working-directory: ./sparkai-desktop
-        run: bun run build:win
+        run: bun run vite build
+
+      - name: Package EXE
+        working-directory: ./sparkai-desktop
+        run: npx electron-builder --win --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: "electron-builder"
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
