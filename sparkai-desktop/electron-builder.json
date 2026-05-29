@@ -5,7 +5,6 @@
   "directories": {
     "output": "output-prod"
   },
-  "afterPack": "./electron/afterPack.cjs",
   "files": [
     "dist",
     "dist-electron"
