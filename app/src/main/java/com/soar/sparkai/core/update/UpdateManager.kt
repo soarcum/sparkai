@@ -164,96 +164,111 @@ object UpdateManager {
 
     /**
      * 下载 APK 的核心流式引擎
-     * 自动处理 3xx 复杂的重定向逻辑，并默认使用 ghproxy 代理加速下载
+     * 自动处理 3xx 复杂的重定向逻辑，优先使用 ghproxy 代理加速下载，失败后自动回退直连 GitHub
      */
     fun downloadApk(context: Context, downloadUrl: String) {
         if (updateState is UpdateState.Downloading) return
 
-        // 默认内置 ghproxy 极速代理下载服务以应对国内 GitHub 直连困难的问题
-        val finalUrl = if (downloadUrl.startsWith("https://github.com")) {
-            "https://ghproxy.net/$downloadUrl"
+        // 构建候选 URL 列表：优先代理，备选直连
+        val candidateUrls = if (downloadUrl.startsWith("https://github.com")) {
+            listOf("https://ghfast.top/$downloadUrl", downloadUrl)
         } else {
-            downloadUrl
+            listOf(downloadUrl)
         }
 
         updateState = UpdateState.Downloading(0, 0L, 0L)
 
         CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val url = URL(finalUrl)
-                var connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 15000
-                connection.readTimeout = 15000
-                connection.useCaches = false
-                connection.instanceFollowRedirects = true
-
-                var responseCode = connection.responseCode
-                var redirectCount = 0
-                // 手动且深度处理复杂的 HTTP 3xx 系列重定向地址
-                while ((responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
-                            responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
-                            responseCode == HttpURLConnection.HTTP_SEE_OTHER ||
-                            responseCode == 307 || responseCode == 308) && redirectCount < 5
-                ) {
-                    val newUrl = connection.getHeaderField("Location") ?: break
-                    connection = URL(newUrl).openConnection() as HttpURLConnection
-                    connection.connectTimeout = 15000
-                    connection.readTimeout = 15000
-                    connection.useCaches = false
-                    connection.instanceFollowRedirects = true
-                    responseCode = connection.responseCode
-                    redirectCount++
+            var lastError: Exception? = null
+            for (urlStr in candidateUrls) {
+                try {
+                    val apkFile = downloadFromUrl(context, urlStr)
+                    if (apkFile != null) {
+                        val apkUri = FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            apkFile
+                        )
+                        updateState = UpdateState.ReadyToInstall(apkUri, apkFile)
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    lastError = e
+                    // 继续尝试下一个候选 URL
                 }
-
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val contentLength = connection.contentLengthLong
-                    val inputStream = connection.inputStream
-
-                    val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    if (dir != null && !dir.exists()) {
-                        dir.mkdirs()
-                    }
-                    val apkFile = File(dir, "update.apk")
-                    if (apkFile.exists()) {
-                        apkFile.delete()
-                    }
-
-                    val outputStream = FileOutputStream(apkFile)
-                    val buffer = ByteArray(4096)
-                    var bytesRead: Int
-                    var totalBytesRead = 0L
-
-                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                        outputStream.write(buffer, 0, bytesRead)
-                        totalBytesRead += bytesRead
-
-                        val progress = if (contentLength > 0) {
-                            ((totalBytesRead * 100) / contentLength).toInt()
-                        } else {
-                            0
-                        }
-                        updateState = UpdateState.Downloading(progress, contentLength, totalBytesRead)
-                    }
-
-                    outputStream.flush()
-                    outputStream.close()
-                    inputStream.close()
-
-                    // 构建基于 FileProvider 的安全共享 Content URI 并派发至 ReadyToInstall 状态
-                    val apkUri = FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        apkFile
-                    )
-                    updateState = UpdateState.ReadyToInstall(apkUri, apkFile)
-                } else {
-                    updateState = UpdateState.Error("下载文件失败，HTTP 状态码: $responseCode")
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                updateState = UpdateState.Error("下载已中断: ${e.localizedMessage}")
             }
+            // 所有候选 URL 均失败
+            updateState = UpdateState.Error("下载已中断: ${lastError?.localizedMessage ?: "所有下载源均不可用"}")
         }
+    }
+
+    /**
+     * 从指定 URL 下载 APK，返回下载成功的文件，失败抛异常
+     */
+    private fun downloadFromUrl(context: Context, urlStr: String): File? {
+        val url = URL(urlStr)
+        var connection = url.openConnection() as HttpURLConnection
+        connection.connectTimeout = 15000
+        connection.readTimeout = 15000
+        connection.useCaches = false
+        connection.instanceFollowRedirects = true
+
+        var responseCode = connection.responseCode
+        var redirectCount = 0
+        while ((responseCode == HttpURLConnection.HTTP_MOVED_TEMP ||
+                    responseCode == HttpURLConnection.HTTP_MOVED_PERM ||
+                    responseCode == HttpURLConnection.HTTP_SEE_OTHER ||
+                    responseCode == 307 || responseCode == 308) && redirectCount < 5
+        ) {
+            val newUrl = connection.getHeaderField("Location") ?: break
+            connection = URL(newUrl).openConnection() as HttpURLConnection
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            connection.useCaches = false
+            connection.instanceFollowRedirects = true
+            responseCode = connection.responseCode
+            redirectCount++
+        }
+
+        if (responseCode != HttpURLConnection.HTTP_OK) {
+            throw Exception("HTTP 状态码: $responseCode")
+        }
+
+        val contentLength = connection.contentLengthLong
+        val inputStream = connection.inputStream
+
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (dir != null && !dir.exists()) {
+            dir.mkdirs()
+        }
+        val apkFile = File(dir, "update.apk")
+        if (apkFile.exists()) {
+            apkFile.delete()
+        }
+
+        val outputStream = FileOutputStream(apkFile)
+        val buffer = ByteArray(32768)
+        var bytesRead: Int
+        var totalBytesRead = 0L
+
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+            outputStream.write(buffer, 0, bytesRead)
+            totalBytesRead += bytesRead
+
+            val progress = if (contentLength > 0) {
+                ((totalBytesRead * 100) / contentLength).toInt()
+            } else {
+                0
+            }
+            updateState = UpdateState.Downloading(progress, contentLength, totalBytesRead)
+        }
+
+        outputStream.flush()
+        outputStream.close()
+        inputStream.close()
+
+        return apkFile
     }
 
     /**
