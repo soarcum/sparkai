@@ -27,7 +27,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": "always",
     "createStartMenuShortcut": true,
-    "shortcutName": "SparkAI",
-    "runAfterFinish": true
+    "shortcutName": "SparkAI"
   }
 }
