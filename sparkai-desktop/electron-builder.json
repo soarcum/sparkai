@@ -1,14 +1,33 @@
 {
   "appId": "com.soar.sparkai.desktop",
   "productName": "SparkAI",
+  "copyright": "Copyright © 2026 Soar",
   "directories": {
     "output": "output-prod"
   },
+  "afterPack": "./electron/afterPack.cjs",
   "files": [
     "dist",
     "dist-electron"
   ],
   "win": {
-    "target": "nsis"
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["x64"]
+      }
+    ],
+    "requestedExecutionLevel": "asInvoker"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": "always",
+    "createStartMenuShortcut": true,
+    "shortcutName": "SparkAI"
   }
 }

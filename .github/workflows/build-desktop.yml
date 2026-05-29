@@ -12,7 +12,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code
@@ -31,27 +31,11 @@ jobs:
         working-directory: ./sparkai-desktop
         run: npx vite build
 
-      - name: List Build Output
-        working-directory: ./sparkai-desktop
-        run: |
-          echo "=== dist ==="
-          dir dist
-          echo "=== dist-electron ==="
-          dir dist-electron
-
-      - name: Download Electron Binary
-        working-directory: ./sparkai-desktop
-        run: npx electron --version
-        env:
-          ELECTRON_CACHE: "C:\\electron-cache"
-
       - name: Package EXE
         working-directory: ./sparkai-desktop
         run: npx electron-builder --win --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEBUG: "electron-builder"
-          ELECTRON_BUILDER_CACHE: "C:\\electron-cache"
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
