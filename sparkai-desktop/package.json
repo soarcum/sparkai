@@ -9,7 +9,6 @@
     "build:win": "vite build && electron-builder --win --x64"
   },
   "dependencies": {
-    "qrcode": "^1.5.4",
     "vue": "^3.4.21"
   },
   "devDependencies": {
