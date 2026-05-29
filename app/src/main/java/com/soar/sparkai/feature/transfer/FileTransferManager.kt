@@ -18,6 +18,8 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URL
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
@@ -39,6 +41,7 @@ object FileTransferManager {
         ip: String,
         port: Int,
         onOfferReceived: (id: String, name: String, size: Long) -> Unit,
+        onTextOfferReceived: (id: String, text: String, isUrl: Boolean) -> Unit,
         onStatusChanged: (connected: Boolean) -> Unit
     ) = withContext(Dispatchers.IO) {
         val url = "http://$ip:$port/events"
@@ -68,6 +71,13 @@ object FileTransferManager {
                                 json.getString("id"),
                                 json.getString("filename"),
                                 json.getLong("size")
+                            )
+                        } else if (currentEvent == "text-offer") {
+                            val json = JSONObject(data)
+                            onTextOfferReceived(
+                                json.getString("id"),
+                                json.getString("text"),
+                                json.getBoolean("isUrl")
                             )
                         }
                         currentEvent = ""
@@ -127,6 +137,41 @@ object FileTransferManager {
             }
         } catch (e: Exception) {
             onError(e.message ?: "未知上传错误")
+        }
+    }
+
+    /**
+     * 上传手机文本/链接到电脑端
+     */
+    suspend fun uploadText(
+        ip: String,
+        port: Int,
+        text: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val json = JSONObject().apply {
+                put("text", text)
+            }
+            val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
+            val requestBody = json.toString().toRequestBody(mediaType)
+            val uploadUrl = "http://$ip:$port/share/text"
+            
+            val request = Request.Builder()
+                .url(uploadUrl)
+                .post(requestBody)
+                .build()
+
+            OkHttpClient().newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    onSuccess()
+                } else {
+                    onError("服务器返回错误: ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            onError(e.message ?: "未知文本发送错误")
         }
     }
 

@@ -81,6 +81,41 @@
             </div>
           </section>
 
+          <!-- 局域网极速互传桥接卡片 -->
+          <section class="grid grid-cols-3 gap-6 shrink-0">
+            <div class="col-span-2 p-5 rounded-2xl glass-panel flex flex-col justify-between border border-brand-border min-h-[170px] relative overflow-hidden">
+              <div class="relative z-10">
+                <div class="flex items-center space-x-2.5">
+                  <span :class="[serverRunning ? 'bg-emerald-400 dot-pulse shadow-glow-cyan' : 'bg-red-400']" class="w-2.5 h-2.5 rounded-full shrink-0"></span>
+                  <span class="text-xs font-semibold tracking-wider text-brand-textMuted uppercase">极速互传局域网服务</span>
+                </div>
+                <h3 class="text-lg font-bold text-white mt-3.5">
+                  {{ serverRunning ? '局域网互传桥接引擎已就绪' : '正在启动局域网引擎...' }}
+                </h3>
+                <p class="text-xs text-brand-textMuted mt-1 leading-relaxed">
+                  手机端可扫描右侧二维码一键桥接，或进入「局域网高速互传中心」连接以下任一本地 IP：
+                </p>
+                <div class="flex flex-wrap gap-2 mt-3.5">
+                  <span v-for="ip in ips" :key="ip" @click="copyText(`http://${ip}:${port}`)" 
+                        class="text-[10px] font-mono px-2.5 py-1.5 rounded bg-white/5 border border-white/10 text-brand-secondary hover:bg-brand-secondary/15 cursor-pointer transition-colors">
+                    {{ ip }}:{{ port }} (点击复制)
+                  </span>
+                  <span v-if="ips.length === 0" class="text-xs text-brand-textMuted font-mono">未发现有效网络网卡</span>
+                </div>
+              </div>
+              <div class="absolute -right-10 -bottom-10 w-32 h-32 bg-brand-primary/5 rounded-full blur-3xl"></div>
+            </div>
+
+            <!-- 极客发光扫码卡片 -->
+            <div class="p-5 rounded-2xl glass-panel flex flex-col items-center justify-center border border-brand-border min-h-[170px] relative overflow-hidden">
+              <div class="relative z-10 flex flex-col items-center">
+                <canvas ref="overviewQrCanvas" class="w-24 h-24 bg-white/5 rounded-lg p-1 shadow-glow-cyan"></canvas>
+                <span class="text-[10px] text-brand-textMuted mt-2.5">手机扫码一键连接</span>
+              </div>
+              <div class="absolute -left-10 -bottom-10 w-24 h-24 bg-brand-secondary/5 rounded-full blur-3xl"></div>
+            </div>
+          </section>
+
           <!-- 虚拟活动日志监控 (实时滚动) -->
           <section class="flex-1 min-h-[220px] rounded-2xl glass-panel p-5 flex flex-col overflow-hidden border border-brand-border">
             <div class="flex items-center justify-between pb-3.5 border-b border-brand-border shrink-0">
@@ -102,7 +137,7 @@
 
         <!-- Tab 1: 局域网互传 -->
         <template v-else-if="currentTab === 1">
-          <FileTransfer />
+          <FileTransfer :serverRunning="serverRunning" :ips="ips" :port="port" />
         </template>
 
         <!-- Tab 2: 参数配置 -->
@@ -120,6 +155,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, shallowRef } from 'vue'
 import FileTransfer from '@/components/FileTransfer.vue'
+import QRCode from 'qrcode'
 
 // SVG 图标组件，使用 shallowRef 提升渲染性能
 const HomeIcon = shallowRef({
@@ -140,6 +176,29 @@ const NetworkIcon = shallowRef({
 const ShareIcon = shallowRef({
   template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>`
 })
+
+const serverRunning = ref(false)
+const ips = ref<string[]>([])
+const port = ref(9090)
+const overviewQrCanvas = ref<HTMLCanvasElement | null>(null)
+
+const loadOverviewQRCode = () => {
+  nextTick(() => {
+    if (overviewQrCanvas.value && ips.value.length > 0) {
+      const connectUrl = `http://${ips.value[0]}:${port.value}`
+      QRCode.toCanvas(overviewQrCanvas.value, connectUrl, {
+        width: 96,
+        margin: 1,
+        color: { dark: '#ffffff', light: '#1e1e2f00' }
+      })
+    }
+  })
+}
+
+const copyText = (text: string) => {
+  navigator.clipboard.writeText(text)
+  addLog('SUCCESS', `已复制连接地址到剪贴板: ${text}`)
+}
 
 const currentTab = ref(0)
 const logContainer = ref<HTMLElement | null>(null)
@@ -221,9 +280,29 @@ const simulateData = () => {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   updateTimer = window.setInterval(simulateData, 3000)
   addLog('INFO', '数据模拟刷新与心跳服务已上线')
+
+  if (window.electronAPI) {
+    addLog('INFO', '正在拉起局域网极速互传服务器...')
+    const res = await window.electronAPI.startFileServer()
+    if (res?.success) {
+      serverRunning.value = true
+      ips.value = res.ips
+      port.value = res.port
+      addLog('SUCCESS', `局域网极速互传服务器启动成功！端口: ${res.port}`)
+      loadOverviewQRCode()
+    } else {
+      addLog('WARN', `局域网极速互传服务器启动失败: ${res?.error || '未知原因'}`)
+    }
+
+    window.electronAPI.onServerLog((log: any) => {
+      if (log && log.level && log.message) {
+        addLog(log.level, log.message)
+      }
+    })
+  }
 })
 
 onUnmounted(() => {

@@ -16,8 +16,12 @@ data class TransferItem(
 )
 
 enum class TransferType {
-    UPLOAD,    // 手机发送给电脑
-    DOWNLOAD   // 电脑接收来自手机 (或手机下载电脑的要约)
+    UPLOAD,        // 手机发送给电脑
+    DOWNLOAD,      // 电脑接收来自手机 (或手机下载电脑的要约)
+    UPLOAD_TEXT,   // 手机发送文本给电脑
+    DOWNLOAD_TEXT, // 手机下载/接收电脑端的文本
+    UPLOAD_LINK,   // 手机发送链接给电脑
+    DOWNLOAD_LINK  // 手机接收电脑端的链接
 }
 
 enum class TransferStatus {

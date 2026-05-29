@@ -12,11 +12,24 @@ import com.soar.sparkai.feature.transfer.FileTransferManager
 import com.soar.sparkai.feature.transfer.model.TransferItem
 import com.soar.sparkai.feature.transfer.model.TransferStatus
 import com.soar.sparkai.feature.transfer.model.TransferType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetSocketAddress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+data class DiscoveredDevice(
+    val hostname: String,
+    val ip: String,
+    val port: Int
+)
 
 class FileTransferViewModel : ViewModel() {
 
@@ -29,7 +42,7 @@ class FileTransferViewModel : ViewModel() {
     private var connectionJob: Job? = null
 
     // 建立局域网长连接
-    fun connect() {
+    fun connect(context: Context) {
         if (isConnected) return
         connectionJob = viewModelScope.launch {
             FileTransferManager.startSSEConnection(
@@ -44,6 +57,31 @@ class FileTransferViewModel : ViewModel() {
                         status = TransferStatus.WAITING,
                         timestamp = getCurrentTime()
                     )
+                },
+                onTextOfferReceived = { id, text, isUrl ->
+                    // 自动将接收到的文本写入手机系统剪贴板
+                    try {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = android.content.ClipData.newPlainText("SparkAI Share", text)
+                        clipboard.setPrimaryClip(clip)
+                    } catch (e: Exception) {
+                        // 忽略剪贴板写入异常
+                    }
+
+                    viewModelScope.launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "📋 收到电脑分享的${if (isUrl) "链接" else "文本"}，已自动复制", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+
+                    val newItem = TransferItem(
+                        id = id,
+                        name = text,
+                        size = text.length.toLong(),
+                        type = if (isUrl) TransferType.DOWNLOAD_LINK else TransferType.DOWNLOAD_TEXT,
+                        status = TransferStatus.SUCCESS,
+                        speed = "完成",
+                        timestamp = getCurrentTime()
+                    )
+                    transferList = listOf(newItem) + transferList
                 },
                 onStatusChanged = { connected ->
                     isConnected = connected
@@ -86,6 +124,38 @@ class FileTransferViewModel : ViewModel() {
                 onProgress = { progress ->
                     updateItemProgress(taskId, progress)
                 },
+                onSuccess = {
+                    updateItemStatus(taskId, TransferStatus.SUCCESS)
+                },
+                onError = { err ->
+                    updateItemStatus(taskId, TransferStatus.FAILED, err)
+                }
+            )
+        }
+    }
+
+    // 发送文本/链接给电脑端
+    fun sendText(text: String) {
+        if (text.isBlank()) return
+        val isLink = text.startsWith("http://") || text.startsWith("https://")
+        val taskId = (Math.random() * Int.MAX_VALUE).toInt().toString(36).substring(2, 10)
+        
+        val newItem = TransferItem(
+            id = taskId,
+            name = text,
+            size = text.length.toLong(),
+            type = if (isLink) TransferType.UPLOAD_LINK else TransferType.UPLOAD_TEXT,
+            status = TransferStatus.TRANSFERRING,
+            speed = "发送中",
+            timestamp = getCurrentTime()
+        )
+        transferList = listOf(newItem) + transferList
+
+        viewModelScope.launch {
+            FileTransferManager.uploadText(
+                ip = ip.trim(),
+                port = port.trim().toIntOrNull() ?: 9090,
+                text = text,
                 onSuccess = {
                     updateItemStatus(taskId, TransferStatus.SUCCESS)
                 },
@@ -166,8 +236,80 @@ class FileTransferViewModel : ViewModel() {
         return SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
     }
 
+    var discoveredDevices by mutableStateOf<List<DiscoveredDevice>>(emptyList())
+    private var udpJob: Job? = null
+
+    init {
+        startUdpDiscovery()
+    }
+
+    // 开启局域网 UDP 广播自动扫描发现
+    fun startUdpDiscovery() {
+        udpJob?.cancel()
+        discoveredDevices = emptyList()
+        udpJob = viewModelScope.launch(Dispatchers.IO) {
+            var socket: DatagramSocket? = null
+            try {
+                socket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(9092))
+                }
+                val buffer = ByteArray(1024)
+                val packet = DatagramPacket(buffer, buffer.size)
+
+                while (isActive) {
+                    socket.receive(packet)
+                    val message = String(packet.data, 0, packet.length).trim()
+                    try {
+                        val json = JSONObject(message)
+                        if (json.optString("type") == "sparkai-server") {
+                            val ipsArray = json.getJSONArray("ips")
+                            val portVal = json.getInt("port")
+                            val host = json.optString("hostname", "SparkAI 电脑端")
+
+                            val senderIp = packet.address.hostAddress
+                            var resolvedIp = ""
+                            for (i in 0 until ipsArray.length()) {
+                                val ipItem = ipsArray.getString(i)
+                                if (ipItem == senderIp) {
+                                    resolvedIp = ipItem
+                                    break
+                                }
+                            }
+                            if (resolvedIp.isEmpty() && ipsArray.length() > 0) {
+                                resolvedIp = ipsArray.getString(0)
+                            }
+
+                            if (resolvedIp.isNotEmpty()) {
+                                val device = DiscoveredDevice(hostname = host, ip = resolvedIp, port = portVal)
+                                withContext(Dispatchers.Main) {
+                                    if (!discoveredDevices.any { it.ip == device.ip && it.port == device.port }) {
+                                        discoveredDevices = discoveredDevices + device
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // 忽略解析错误
+                    }
+                }
+            } catch (e: Exception) {
+                // 忽略 Socket 异常
+            } finally {
+                socket?.close()
+            }
+        }
+    }
+
+    fun stopUdpDiscovery() {
+        udpJob?.cancel()
+        udpJob = null
+        discoveredDevices = emptyList()
+    }
+
     override fun onCleared() {
         super.onCleared()
         disconnect()
+        stopUdpDiscovery()
     }
 }

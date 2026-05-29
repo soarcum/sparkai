@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { BrowserWindow } from 'electron'
+import dgram from 'dgram'
 
 // 手机上传的文件默认保存路径 (用户桌面的 SparkAI-Files)
 export const SAVE_DIR = path.join(os.homedir(), 'Desktop', 'SparkAI-Files')
@@ -142,6 +143,35 @@ function handleDownload(req: http.IncomingMessage, res: http.ServerResponse, par
   readStream.pipe(res)
 }
 
+// 处理手机端分享的文本/链接 (HTTP POST)
+function handleShareText(req: http.IncomingMessage, res: http.ServerResponse) {
+  let body = ''
+  req.on('data', chunk => {
+    body += chunk.toString()
+  })
+  req.on('end', () => {
+    try {
+      const json = JSON.parse(body)
+      const text = json.text || ''
+      const isUrl = text.startsWith('http://') || text.startsWith('https://')
+      notifyRenderer('server-log', { level: 'SUCCESS', message: `收到手机分享的文本: ${text.length > 30 ? text.substring(0, 30) + '...' : text}` })
+      notifyRenderer('text-received', { text, isUrl, time: new Date().toLocaleTimeString(), type: 'receive' })
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ success: true }))
+    } catch (err: any) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+      res.end(JSON.stringify({ success: false, error: err.message }))
+    }
+  })
+}
+
+// 广播文本或链接要约给手机端
+export function broadcastTextOffer(text: string, isUrl: boolean) {
+  const id = Math.random().toString(36).substring(2, 10)
+  broadcastSSE('text-offer', { id, text, isUrl })
+  notifyRenderer('server-log', { level: 'INFO', message: `已向手机端广播文本要约: ${text.length > 30 ? text.substring(0, 30) + '...' : text}` })
+}
+
 // 注册待发送文件的要约
 export function registerFileOffer(filePath: string, name: string, size: number): string {
   const id = Math.random().toString(36).substring(2, 10)
@@ -173,6 +203,8 @@ export function startFileServer(): Promise<number> {
         handleSSE(req, res)
       } else if (parsedUrl.pathname === '/upload' && req.method === 'POST') {
         handleUpload(req, res, parsedUrl)
+      } else if (parsedUrl.pathname === '/share/text' && req.method === 'POST') {
+        handleShareText(req, res)
       } else if (parsedUrl.pathname === '/download') {
         handleDownload(req, res, parsedUrl)
       } else {
@@ -185,6 +217,8 @@ export function startFileServer(): Promise<number> {
       server?.listen(port, () => {
         activePort = port
         notifyRenderer('server-log', { level: 'SUCCESS', message: `局域网通信服务器在端口 ${port} 启动成功` })
+        const ips = getIPAddresses()
+        startUdpBroadcast(ips, port)
         resolve(port)
       })
 
@@ -204,11 +238,64 @@ export function startFileServer(): Promise<number> {
 
 // 停止服务
 export function stopFileServer() {
+  stopUdpBroadcast()
   if (server) {
     sseClients.forEach(res => res.end())
     sseClients.clear()
     server.close()
     server = null
     notifyRenderer('server-log', { level: 'WARN', message: `局域网通信服务器已关闭` })
+  }
+}
+
+let udpSocket: dgram.Socket | null = null
+let udpTimer: NodeJS.Timeout | null = null
+
+// 开启 UDP 广播服务，向局域网宣告此电脑节点
+export function startUdpBroadcast(ips: string[], port: number) {
+  stopUdpBroadcast()
+  udpSocket = dgram.createSocket('udp4')
+  
+  udpSocket.bind(() => {
+    try {
+      udpSocket?.setBroadcast(true)
+      
+      // 定期 3 秒向局域网广播一次
+      udpTimer = setInterval(() => {
+        if (!udpSocket) return
+        const message = JSON.stringify({
+          type: 'sparkai-server',
+          ips,
+          port,
+          hostname: os.hostname()
+        })
+        const payload = Buffer.from(message)
+        // 广播端口 9092
+        udpSocket.send(payload, 0, payload.length, 9092, '255.255.255.255', (err) => {
+          if (err) {
+            console.error('[UDP Broadcast Error]', err.message)
+          }
+        })
+      }, 3000)
+      
+      notifyRenderer('server-log', { level: 'SUCCESS', message: `局域网 UDP 发现广播服务已拉起，端口: 9092` })
+    } catch (e: any) {
+      notifyRenderer('server-log', { level: 'WARN', message: `启动 UDP 广播发生异常: ${e.message}` })
+    }
+  })
+}
+
+// 停止 UDP 广播
+export function stopUdpBroadcast() {
+  if (udpTimer) {
+    clearInterval(udpTimer)
+    udpTimer = null
+  }
+  if (udpSocket) {
+    try {
+      udpSocket.close()
+    } catch (e) {}
+    udpSocket = null
+    notifyRenderer('server-log', { level: 'INFO', message: `局域网 UDP 发现广播服务已安全关闭` })
   }
 }

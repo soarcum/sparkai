@@ -46,10 +46,34 @@
       <span class="text-[10px] text-brand-textMuted mt-1">支持任意格式大文件，局域网点对点高速直传</span>
     </div>
 
+    <!-- 剪贴板与文本极速桥接卡片 -->
+    <div class="p-5 rounded-2xl glass-panel border border-brand-border flex flex-col space-y-4">
+      <div class="flex items-center space-x-2.5">
+        <span class="w-2.5 h-2.5 rounded-full bg-brand-primary dot-pulse shadow-glow-purple shrink-0"></span>
+        <span class="text-xs font-semibold tracking-wider text-brand-textMuted uppercase">剪贴板与文本极速桥接 (支持图片 Ctrl+V 自动识别)</span>
+      </div>
+      
+      <div class="flex space-x-3 items-end">
+        <textarea v-model="inputText" placeholder="直接在此输入或粘贴大段文字、分享网页链接... 按 Ctrl+V 也可智能识别并粘贴发送剪贴板图片！"
+                  class="flex-1 min-h-[72px] bg-black/30 border border-brand-border rounded-xl p-3 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-brand-primary focus:shadow-glow-purple transition-all duration-200 resize-none"></textarea>
+        
+        <div class="flex flex-col space-y-2 shrink-0">
+          <button @click="sendInputText" :disabled="!inputText.trim()"
+                  class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-brand-primary to-brand-primary/80 text-white font-semibold text-xs transition-transform active:scale-95 disabled:opacity-50 disabled:pointer-events-none hover:shadow-glow-purple">
+            发送输入文本
+          </button>
+          <button @click="sendSystemClipboard"
+                  class="px-4 py-2.5 rounded-xl border border-brand-secondary bg-brand-secondary/10 hover:bg-brand-secondary/20 text-brand-secondary font-semibold text-xs transition-transform active:scale-95 hover:shadow-glow-cyan">
+            发送系统剪贴板
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 传输进度与列表 -->
     <div class="flex-1 rounded-2xl glass-panel p-5 flex flex-col border border-brand-border min-h-[220px]">
       <div class="flex items-center justify-between pb-3.5 border-b border-brand-border">
-        <span class="text-xs font-bold tracking-wider uppercase text-brand-secondary">高速互传记录</span>
+        <span class="text-xs font-bold tracking-wider uppercase text-brand-secondary">极速互传与共享记录</span>
         <button @click="clearHistory" class="text-xs text-brand-textMuted hover:text-white transition-colors">清除记录</button>
       </div>
 
@@ -63,9 +87,23 @@
               </span>
               <span class="text-xs font-semibold text-gray-200 truncate max-w-[280px]">{{ item.name }}</span>
             </div>
-            <span class="text-xs font-bold font-mono" :class="[item.status === '完成' ? 'text-emerald-400' : 'text-brand-secondary']">
-              {{ item.status }}
-            </span>
+            <div class="flex items-center space-x-2">
+              <!-- 一键复制文本 -->
+              <button v-if="item.textRaw || item.name.includes('[发送文本]') || item.name.includes('[收到文本]') || item.name.includes('[发送剪贴板]') || item.name.includes('[收到链接]') || item.name.includes('[分享链接]')"
+                      @click.stop="copyText(item.textRaw || item.name.split('] ')[1] || item.name)"
+                      class="text-[10px] text-brand-secondary hover:text-white px-2 py-0.5 rounded border border-brand-secondary/30 bg-brand-secondary/5 hover:bg-brand-secondary/20 transition-colors">
+                复制文本
+              </button>
+              <!-- 一键打开链接 -->
+              <button v-if="item.isUrl || item.name.includes('[收到链接]') || item.name.includes('[分享链接]')"
+                      @click.stop="openUrl(item.textRaw || item.name.split('] ')[1] || item.name)"
+                      class="text-[10px] text-brand-accent hover:text-white px-2 py-0.5 rounded border border-brand-accent/30 bg-brand-accent/5 hover:bg-brand-accent/20 transition-colors">
+                ⚡ 打开链接
+              </button>
+              <span class="text-xs font-bold font-mono" :class="[item.status === '完成' ? 'text-emerald-400' : 'text-brand-secondary']">
+                {{ item.status }}
+              </span>
+            </div>
           </div>
 
           <div v-if="item.status !== '完成' && item.progress !== undefined" class="w-full bg-white/5 h-1.5 rounded-full overflow-hidden flex items-center">
@@ -73,7 +111,7 @@
           </div>
 
           <div class="flex items-center justify-between text-[10px] text-brand-textMuted">
-            <span>{{ (item.size / 1024 / 1024).toFixed(2) }} MB | {{ item.time }}</span>
+            <span>{{ (item.size / 1024 / 1024) > 0.01 ? (item.size / 1024 / 1024).toFixed(2) + ' MB' : item.size + ' B' }} | {{ item.time }}</span>
             <span>{{ item.progress ? Math.round(item.progress) + '%' : '' }}</span>
           </div>
         </div>
@@ -87,26 +125,128 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import QRCode from 'qrcode'
 
-const serverRunning = ref(false)
-const ips = ref<string[]>([])
-const port = ref(9090)
+const props = defineProps<{
+  serverRunning: boolean
+  ips: string[]
+  port: number
+}>()
+
 const dragOver = ref(false)
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
+const inputText = ref('')
 
 interface TransferItem {
   name: string
   size: number
   type: 'send' | 'receive'
   status: string
-  progress: number
+  progress?: number
   time: string
+  textRaw?: string
+  isUrl?: boolean
 }
 const transferList = ref<TransferItem[]>([])
 
 const copyText = (text: string) => {
   navigator.clipboard.writeText(text)
+}
+
+const openUrl = (url: string) => {
+  const targetUrl = url.startsWith('http') ? url : `http://${url}`
+  window.open(targetUrl, '_blank')
+}
+
+// 电脑端输入文本并发送
+const sendInputText = () => {
+  const text = inputText.value.trim()
+  if (!text) return
+  const isUrl = text.startsWith('http://') || text.startsWith('https://')
+  if (window.electronAPI) {
+    window.electronAPI.sendTextOffer(text, isUrl)
+    transferList.value.unshift({
+      name: isUrl ? `[分享链接] ${text}` : `[发送文本] ${text.length > 30 ? text.substring(0, 30) + '...' : text}`,
+      size: text.length,
+      type: 'send',
+      status: '完成',
+      time: new Date().toLocaleTimeString(),
+      textRaw: text,
+      isUrl: isUrl
+    })
+    inputText.value = ''
+  }
+}
+
+// 自动识别系统剪贴板类型并发送
+const sendSystemClipboard = async () => {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text && text.trim().length > 0) {
+      const isUrl = text.startsWith('http://') || text.startsWith('https://')
+      if (window.electronAPI) {
+        window.electronAPI.sendTextOffer(text, isUrl)
+        transferList.value.unshift({
+          name: isUrl ? `[分享链接] ${text}` : `[发送剪贴板] ${text.length > 30 ? text.substring(0, 30) + '...' : text}`,
+          size: text.length,
+          type: 'send',
+          status: '完成',
+          time: new Date().toLocaleTimeString(),
+          textRaw: text,
+          isUrl: isUrl
+        })
+        return
+      }
+    }
+  } catch (e) {
+    // 浏览器没有剪贴板权限或为图片
+  }
+
+  // 尝试读取剪贴板图片并作为要约发送
+  if (window.electronAPI) {
+    const res = await window.electronAPI.readClipboardImageAndOffer()
+    if (res.success) {
+      transferList.value.unshift({
+        name: res.filename,
+        size: res.size,
+        type: 'send',
+        status: '等待手机确认...',
+        progress: 0,
+        time: new Date().toLocaleTimeString()
+      })
+    } else {
+      alert('剪贴板中未发现有效文本或图片内容！')
+    }
+  }
+}
+
+// 监听键盘 Ctrl+V 粘贴截图/图片一键极速发送
+const handleGlobalPaste = async (e: ClipboardEvent) => {
+  const items = e.clipboardData?.items
+  if (!items) return
+  
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.type.indexOf('image') !== -1) {
+      // 捕获到了图片数据
+      e.preventDefault()
+      if (window.electronAPI) {
+        const res = await window.electronAPI.readClipboardImageAndOffer()
+        if (res.success) {
+          transferList.value.unshift({
+            name: res.filename,
+            size: res.size,
+            type: 'send',
+            status: '等待手机确认...',
+            progress: 0,
+            time: new Date().toLocaleTimeString()
+          })
+        }
+      }
+      break
+    }
+  }
 }
 
 const openSaveDir = () => window.electronAPI?.openSaveDir()
@@ -129,39 +269,32 @@ const handleDrop = async (e: DragEvent) => {
   dragOver.value = false
   const file = e.dataTransfer?.files[0]
   if (file && window.electronAPI) {
-    // 拖拽逻辑支持
-    const res = await window.electronAPI?.selectAndSendFile() // 也可以由 preload 暴露直接物理文件投递，这里采用标准dialog规避沙盒物理路径权限
+    const res = await window.electronAPI?.selectAndSendFile()
   }
 }
 
 const clearHistory = () => { transferList.value = [] }
 
 const loadQRCode = () => {
-  const script = document.createElement('script')
-  script.src = new URL('../assets/qrcode.min.js', import.meta.url).href
-  script.onload = () => {
-    if (qrCanvas.value && ips.value.length > 0 && (window as any).QRCode) {
-      const connectUrl = `http://${ips.value[0]}:${port.value}`;
-      (window as any).QRCode.toCanvas(qrCanvas.value, connectUrl, { width: 96, margin: 1, color: { dark: '#ffffff', light: '#1e1e2f00' } })
-    }
+  if (qrCanvas.value && props.ips && props.ips.length > 0) {
+    const connectUrl = `http://${props.ips[0]}:${props.port}`
+    QRCode.toCanvas(qrCanvas.value, connectUrl, {
+      width: 96,
+      margin: 1,
+      color: { dark: '#ffffff', light: '#1e1e2f00' }
+    })
   }
-  document.head.appendChild(script)
 }
 
-onMounted(async () => {
+watch(() => props.ips, () => {
+  loadQRCode()
+}, { deep: true, immediate: true })
+
+onMounted(() => {
+  loadQRCode()
+  window.addEventListener('paste', handleGlobalPaste)
+  
   if (window.electronAPI) {
-    const res = await window.electronAPI.startFileServer()
-    if (res?.success) {
-      serverRunning.value = true
-      ips.value = res.ips
-      port.value = res.port
-      loadQRCode()
-    }
-
-    window.electronAPI.onServerLog((log: any) => {
-      // 捕获日志，如有必要在界面输出
-    })
-
     window.electronAPI.onTransferProgress((data: any) => {
       const item = transferList.value.find(t => t.name === data.filename)
       if (item) {
@@ -181,6 +314,22 @@ onMounted(async () => {
         time: file.time
       })
     })
+
+    window.electronAPI.onTextReceived((data: any) => {
+      transferList.value.unshift({
+        name: data.isUrl ? `[收到链接] ${data.text}` : `[收到文本] ${data.text.length > 30 ? data.text.substring(0, 30) + '...' : data.text}`,
+        size: data.text.length,
+        type: 'receive',
+        status: '完成',
+        time: data.time || new Date().toLocaleTimeString(),
+        textRaw: data.text,
+        isUrl: data.isUrl
+      })
+    })
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('paste', handleGlobalPaste)
 })
 </script>

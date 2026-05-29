@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain, Menu, dialog, shell } from 'electron'
-import { startFileServer, stopFileServer, getIPAddresses, registerFileOffer, broadcastSSE, SAVE_DIR } from './fileServer'
+import { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard } from 'electron'
+import { startFileServer, stopFileServer, getIPAddresses, registerFileOffer, broadcastSSE, SAVE_DIR, broadcastTextOffer } from './fileServer'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -168,6 +168,38 @@ ipcMain.handle('select-and-send-file', async () => {
 
 ipcMain.on('open-save-dir', () => {
   shell.openPath(SAVE_DIR)
+})
+
+ipcMain.on('send-text-offer', (_, text: string, isUrl: boolean) => {
+  broadcastTextOffer(text, isUrl)
+})
+
+ipcMain.handle('read-clipboard-image-and-offer', async () => {
+  try {
+    const image = clipboard.readImage()
+    if (image.isEmpty()) {
+      return { success: false, error: '剪贴板中没有图片' }
+    }
+    
+    const pngBuffer = image.toPNG()
+    const tempFileName = `sparkai_paste_${Date.now()}.png`
+    const tempFilePath = path.join(os.tmpdir(), tempFileName)
+    
+    fs.writeFileSync(tempFilePath, pngBuffer)
+    const size = pngBuffer.length
+    
+    // 注册要约并广播
+    const fileId = registerFileOffer(tempFilePath, tempFileName, size)
+    broadcastSSE('file-offer', {
+      id: fileId,
+      filename: tempFileName,
+      size: size
+    })
+    
+    return { success: true, filename: tempFileName, size: size }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
 })
 
 logPhys('[物理诊断] 准备监听 app.whenReady()...')

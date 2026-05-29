@@ -19,3 +19,10 @@ declare module '*.vue' {
   const component: DefineComponent<{}, {}, any>
   export default component
 }
+
+declare module 'qrcode' {
+  const QRCode: {
+    toCanvas(canvas: HTMLCanvasElement, text: string, options?: any): Promise<void>
+  }
+  export default QRCode
+}
