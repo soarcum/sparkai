@@ -25,5 +25,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onTextReceived: (callback: (data: any) => void) => {
     ipcRenderer.on('text-received', (_, data) => callback(data))
+  },
+  onAudioStreamData: (callback: (chunk: Uint8Array) => void) => {
+    ipcRenderer.on('audio-stream-data', (_, data) => callback(data))
+  },
+  onAudioStreamEnd: (callback: () => void) => {
+    ipcRenderer.on('audio-stream-end', (_) => callback())
   }
 })

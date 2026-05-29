@@ -34,6 +34,73 @@
       </div>
     </div>
 
+    <!-- 麦克风投音接收卡片 -->
+    <div class="p-5 rounded-2xl glass-panel border border-brand-border flex flex-col space-y-4 relative overflow-hidden transition-all duration-300"
+         :class="[isAudioStreaming ? 'border-brand-primary/40 bg-brand-primary/[0.02]' : '']">
+      
+      <!-- 酷炫背景渐变光环，只有播放时有流光 -->
+      <div v-if="isAudioStreaming" class="absolute -right-16 -top-16 w-44 h-44 rounded-full bg-brand-primary/10 blur-3xl animate-pulse"></div>
+
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <span :class="[isAudioStreaming ? 'bg-brand-primary dot-pulse shadow-glow-purple' : 'bg-white/20']" 
+                class="w-2.5 h-2.5 rounded-full shrink-0"></span>
+          <span class="text-xs font-semibold tracking-wider text-brand-textMuted uppercase">
+            {{ isAudioStreaming ? '手机无线麦克风实时音频流已接入' : '无线麦克风极速投音接收器' }}
+          </span>
+        </div>
+        <div v-if="isAudioStreaming" class="flex items-center space-x-4">
+          <span class="text-[11px] font-mono text-brand-textMuted">已接收: {{(streamByteCount / 1024).toFixed(1)}} KB</span>
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-brand-primary/20 text-brand-primary font-bold">⏱ {{ audioStreamTime }}</span>
+        </div>
+      </div>
+
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-6 pt-1">
+        <!-- 麦克风状态与播放控制 -->
+        <div class="flex items-center space-x-4">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center transition-all shrink-0"
+               :class="[isAudioStreaming ? 'bg-gradient-to-tr from-brand-primary to-brand-primary/60 text-white shadow-glow-purple animate-pulse' : 'bg-white/5 text-brand-textMuted']">
+            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+            </svg>
+          </div>
+          <div>
+            <h4 class="text-sm font-bold text-white">
+              {{ isAudioStreaming ? '电脑扬声器正实时转播声音...' : '等待手机端启动麦克风投送' }}
+            </h4>
+            <p class="text-xs text-brand-textMuted mt-1 leading-relaxed">
+              {{ isAudioStreaming ? '对准手机端（无线麦克风）说话，声音正极低延迟输送至电脑。可随意控制静音或放大监听。' : '在手机 App 配对连接电脑后，开启「无线麦克风极速投音」即可让电脑听到手机接收的声音。' }}
+            </p>
+          </div>
+        </div>
+
+        <!-- 音频流可视化与增益控制 -->
+        <div v-if="isAudioStreaming" class="flex items-center space-x-6 shrink-0 self-end md:self-center">
+          <!-- 酷炫的 8 根声波柱跳动 -->
+          <div class="flex items-end space-x-1.5 h-10 px-4 py-1.5 bg-black/40 rounded-xl border border-white/5">
+            <div v-for="i in 8" :key="i"
+                 :style="{ height: `${Math.max(15, (rmsVolume * (0.3 + Math.sin(i * 0.8) * 0.5)))}%` }"
+                 class="w-1 bg-brand-primary rounded-full transition-all duration-75"></div>
+          </div>
+
+          <!-- 音量控制面板 -->
+          <div class="flex items-center space-x-3 bg-white/5 p-2 rounded-xl border border-white/10">
+            <button @click="toggleMute" 
+                    class="p-1.5 rounded-lg text-[10px] font-bold transition-all active:scale-95 hover:bg-white/10 shrink-0"
+                    :class="[isMuted ? 'text-red-400 bg-red-400/10 border border-red-500/20' : 'text-brand-secondary bg-brand-secondary/10 border border-brand-secondary/20']">
+              <span>{{ isMuted ? '🔇 已静音' : '🔊 监听中' }}</span>
+            </button>
+            <div class="flex items-center space-x-1.5 px-1 shrink-0">
+              <span class="text-[10px] text-brand-textMuted">增益</span>
+              <input type="range" min="0.5" max="3.0" step="0.1" v-model.number="volumeGain" 
+                     class="w-16 h-1 rounded bg-white/10 appearance-none accent-brand-secondary cursor-pointer" />
+              <span class="text-[10px] font-mono text-brand-secondary font-bold w-6">{{ volumeGain }}x</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 拖拽发送区 -->
     <div @dragover.prevent="dragOver = true" @dragleave="dragOver = false" @drop.prevent="handleDrop"
          :class="[dragOver ? 'border-brand-secondary bg-brand-secondary/5' : 'border-brand-border hover:bg-white/[0.01]']"
@@ -135,6 +202,127 @@ const props = defineProps<{
 }>()
 
 const dragOver = ref(false)
+
+// --- 实时无线麦克风音频播放与调度系统 ---
+const audioCtx = ref<AudioContext | null>(null)
+const gainNode = ref<GainNode | null>(null)
+const isMuted = ref(false)
+const volumeGain = ref(1.5) // 默认 1.5 倍增益放大
+const isAudioStreaming = ref(false)
+const audioStreamTime = ref("00:00")
+const streamByteCount = ref(0)
+const rmsVolume = ref(0) // 实时音量均方根 [0, 100]
+
+let nextPlayTime = 0
+let streamStartTime = 0
+let timerInterval: any = null
+
+// 初始化 Web Audio 环境
+const initAudioContext = () => {
+  if (!audioCtx.value) {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext
+    audioCtx.value = new AudioContextClass({ sampleRate: 16000 })
+    gainNode.value = audioCtx.value.createGain()
+    gainNode.value.gain.value = volumeGain.value
+    gainNode.value.connect(audioCtx.value.destination)
+  }
+  if (audioCtx.value.state === 'suspended') {
+    audioCtx.value.resume()
+  }
+}
+
+// 调节音量增益
+watch(volumeGain, (val) => {
+  if (gainNode.value) {
+    gainNode.value.gain.value = isMuted.value ? 0 : val
+  }
+})
+
+// 静音开关
+const toggleMute = () => {
+  isMuted.value = !isMuted.value
+  if (gainNode.value) {
+    gainNode.value.gain.value = isMuted.value ? 0 : volumeGain.value
+  }
+}
+
+// 收到原始 PCM 数据包
+const handleAudioChunk = (uint8Array: Uint8Array) => {
+  initAudioContext()
+  
+  if (!audioCtx.value || !gainNode.value) return
+  
+  if (!isAudioStreaming.value) {
+    isAudioStreaming.value = true
+    streamStartTime = Date.now()
+    streamByteCount.value = 0
+    rmsVolume.value = 0
+    nextPlayTime = audioCtx.value.currentTime
+    
+    // 启动时长计时器
+    if (timerInterval) clearInterval(timerInterval)
+    timerInterval = setInterval(() => {
+      const diff = Math.floor((Date.now() - streamStartTime) / 1000)
+      const mm = String(Math.floor(diff / 60)).padStart(2, '0')
+      const ss = String(diff % 60).padStart(2, '0')
+      audioStreamTime.value = `${mm}:${ss}`
+    }, 1000)
+  }
+  
+  streamByteCount.value += uint8Array.length
+  
+  // 转换 Uint8Array -> Int16Array -> Float32Array
+  const buffer = uint8Array.buffer
+  const byteOffset = uint8Array.byteOffset
+  const byteLength = uint8Array.byteLength
+  
+  // 16bit PCM 每个采样占 2 字节
+  const samples = byteLength / 2
+  const int16Data = new Int16Array(buffer, byteOffset, samples)
+  const float32Data = new Float32Array(samples)
+  
+  let sumSquare = 0
+  for (let i = 0; i < samples; i++) {
+    const val = int16Data[i] / 32768.0 // 归一化到 [-1, 1]
+    float32Data[i] = val
+    sumSquare += val * val
+  }
+  
+  // 计算均方根音量 (RMS) 用于波形跳动
+  const rms = Math.sqrt(sumSquare / (samples || 1))
+  rmsVolume.value = Math.min(100, Math.floor(rms * 250)) // 限制在 0-100 内
+  
+  // 如果静音，依然计算音量但不做排队播放以省 CPU
+  if (isMuted.value) return
+  
+  // 创建 AudioBuffer 并播放
+  const audioBuffer = audioCtx.value.createBuffer(1, samples, 16000)
+  audioBuffer.getChannelData(0).set(float32Data)
+  
+  const source = audioCtx.value.createBufferSource()
+  source.buffer = audioBuffer
+  source.connect(gainNode.value)
+  
+  // 排队调度算法
+  const now = audioCtx.value.currentTime
+  let startTime = nextPlayTime
+  if (startTime < now) {
+    startTime = now // 如果网络延迟累积，重置为当前时间
+  }
+  
+  source.start(startTime)
+  nextPlayTime = startTime + audioBuffer.duration
+}
+
+// 停止流式传输
+const handleAudioEnd = () => {
+  isAudioStreaming.value = false
+  rmsVolume.value = 0
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+}
 const qrCanvas = ref<HTMLCanvasElement | null>(null)
 const inputText = ref('')
 
@@ -326,10 +514,19 @@ onMounted(() => {
         isUrl: data.isUrl
       })
     })
+
+    window.electronAPI.onAudioStreamData((chunk: Uint8Array) => {
+      handleAudioChunk(chunk)
+    })
+
+    window.electronAPI.onAudioStreamEnd(() => {
+      handleAudioEnd()
+    })
   }
 })
 
 onUnmounted(() => {
   window.removeEventListener('paste', handleGlobalPaste)
+  handleAudioEnd()
 })
 </script>

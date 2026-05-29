@@ -38,8 +38,10 @@ class FileTransferViewModel : ViewModel() {
     var isConnected by mutableStateOf(false)
     var transferList by mutableStateOf<List<TransferItem>>(emptyList())
     var activeOffer by mutableStateOf<TransferItem?>(null)
+    var isAudioStreaming by mutableStateOf(false)
 
     private var connectionJob: Job? = null
+    private var audioJob: Job? = null
 
     // 建立局域网长连接
     fun connect(context: Context) {
@@ -92,10 +94,42 @@ class FileTransferViewModel : ViewModel() {
 
     // 断开连接
     fun disconnect() {
+        stopAudioStreaming()
         FileTransferManager.stopSSEConnection()
         connectionJob?.cancel()
         connectionJob = null
         isConnected = false
+    }
+
+    // 启动手机麦克风流式投射到电脑
+    fun startAudioStreaming(context: Context) {
+        if (isAudioStreaming) return
+        audioJob = viewModelScope.launch {
+            com.soar.sparkai.feature.audio.AudioStreamer.startStreaming(
+                ip = ip.trim(),
+                port = port.trim().toIntOrNull() ?: 9090,
+                onSuccess = {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        isAudioStreaming = true
+                        android.widget.Toast.makeText(context, "🎙 无线麦克风已成功投送到电脑端", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onError = { err ->
+                    viewModelScope.launch(Dispatchers.Main) {
+                        isAudioStreaming = false
+                        android.widget.Toast.makeText(context, "❌ 麦克风投送失败: $err", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            )
+        }
+    }
+
+    // 停止手机麦克风投射
+    fun stopAudioStreaming() {
+        com.soar.sparkai.feature.audio.AudioStreamer.stopStreaming()
+        audioJob?.cancel()
+        audioJob = null
+        isAudioStreaming = false
     }
 
     // 上传文件

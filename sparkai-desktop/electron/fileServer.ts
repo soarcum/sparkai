@@ -165,6 +165,36 @@ function handleShareText(req: http.IncomingMessage, res: http.ServerResponse) {
   })
 }
 
+// 处理手机端实时音频流投射 (HTTP POST Chunked PCM)
+function handleAudioStream(req: http.IncomingMessage, res: http.ServerResponse) {
+  notifyRenderer('server-log', { level: 'INFO', message: `手机无线麦克风音频流已建立连接，开始透传...` })
+  
+  req.on('data', (chunk: Buffer) => {
+    // 收到原始 PCM 字节，通过 IPC 发给渲染进程
+    notifyRenderer('audio-stream-data', chunk)
+  })
+  
+  req.on('end', () => {
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    })
+    res.end(JSON.stringify({ success: true, message: 'Audio stream finished' }))
+    notifyRenderer('server-log', { level: 'SUCCESS', message: `手机无线麦克风音频流传输正常结束` })
+    notifyRenderer('audio-stream-end', null)
+  })
+  
+  req.on('error', (err) => {
+    res.writeHead(500, {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    })
+    res.end(JSON.stringify({ success: false, error: err.message }))
+    notifyRenderer('server-log', { level: 'WARN', message: `手机音频流传输发生异常: ${err.message}` })
+    notifyRenderer('audio-stream-end', null)
+  })
+}
+
 // 广播文本或链接要约给手机端
 export function broadcastTextOffer(text: string, isUrl: boolean) {
   const id = Math.random().toString(36).substring(2, 10)
@@ -205,6 +235,8 @@ export function startFileServer(): Promise<number> {
         handleUpload(req, res, parsedUrl)
       } else if (parsedUrl.pathname === '/share/text' && req.method === 'POST') {
         handleShareText(req, res)
+      } else if (parsedUrl.pathname === '/audio/stream' && req.method === 'POST') {
+        handleAudioStream(req, res)
       } else if (parsedUrl.pathname === '/download') {
         handleDownload(req, res, parsedUrl)
       } else {

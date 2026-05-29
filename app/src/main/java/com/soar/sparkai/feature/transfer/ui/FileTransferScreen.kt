@@ -48,6 +48,16 @@ fun FileTransferScreen(
         }
     }
 
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.startAudioStreaming(context)
+        } else {
+            android.widget.Toast.makeText(context, "⚠️ 需要麦克风权限才能启动无线投音", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -151,6 +161,79 @@ fun FileTransferScreen(
 
             // 2. 文件上传控制卡片 (仅连接成功时可用)
             if (viewModel.isConnected) {
+                // 🎙 无线麦克风极速投音卡片
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E2F))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(
+                                        brush = Brush.linearGradient(
+                                            colors = if (viewModel.isAudioStreaming)
+                                                listOf(Color(0xFF00B894), Color(0xFF05C46B))
+                                            else
+                                                listOf(Color(0xFF6C5CE7), Color(0xFFa29bfe))
+                                        ),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Mic,
+                                    contentDescription = "麦克风",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.width(12.dp))
+                            
+                            Column(modifier = Modifier.weight(1.5f)) {
+                                Text(
+                                    text = "无线麦克风极速投音",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Text(
+                                    text = if (viewModel.isAudioStreaming) "🔊 正在低延迟投射声音至电脑..." else "📶 连接已建立，可一键变身电脑麦",
+                                    color = if (viewModel.isAudioStreaming) Color(0xFF00B894) else Color.White.copy(alpha = 0.5f),
+                                    fontSize = 11.sp
+                                )
+                            }
+                            
+                            // 一键投送开关
+                            Switch(
+                                checked = viewModel.isAudioStreaming,
+                                onCheckedChange = { isChecked ->
+                                    if (isChecked) {
+                                        // 请求录音权限后启动
+                                        audioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                    } else {
+                                        viewModel.stopAudioStreaming()
+                                    }
+                                },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = Color(0xFF00B894),
+                                    uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                    uncheckedTrackColor = Color.White.copy(alpha = 0.1f)
+                                )
+                            )
+                        }
+                    }
+                }
+
                 Button(
                     onClick = { pickFileLauncher.launch("*/*") },
                     modifier = Modifier
