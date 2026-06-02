@@ -56,6 +56,7 @@ import com.soar.sparkai.core.update.UpdateManager
 import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.service.FloatingService
 import com.soar.sparkai.feature.transfer.ui.FileTransferScreen
+import com.soar.sparkai.feature.ai.ui.AiChatScreen
 
 @Composable
 fun HomeScreen() {
@@ -71,6 +72,9 @@ fun HomeScreen() {
 
     if (currentScreen == "transfer") {
         FileTransferScreen(onBack = { currentScreen = "home" })
+        return
+    } else if (currentScreen == "ai") {
+        AiChatScreen(onBack = { currentScreen = "home" })
         return
     }
 
@@ -279,6 +283,52 @@ fun HomeScreen() {
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
                         Text("进入文件传输控制台", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ================== 🤖 AI 智能助理中心卡片 ==================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E2F)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "🤖 AI 智能助理中心",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "集成小米 MiMo 智能大模型直连。不仅支持极速流式对话，若您开启「常驻屏幕助手」，还可在任何第三方界面随时截图，进入此处即可一键提取图片信息并完成智能多模态视觉破译分析。",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            AppLogger.i("HomeScreen", "用户进入 AI 智能对话界面。")
+                            currentScreen = "ai"
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE94057) // 高端玫红，与常驻助手开关相称
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text("进入 AI 智能助理", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
             }
