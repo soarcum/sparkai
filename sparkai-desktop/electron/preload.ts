@@ -10,8 +10,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startFileServer: () => ipcRenderer.invoke('start-file-server'),
   selectAndSendFile: () => ipcRenderer.invoke('select-and-send-file'),
   openSaveDir: () => ipcRenderer.send('open-save-dir'),
-  sendTextOffer: (text: string, isUrl: boolean) => ipcRenderer.send('send-text-offer', text, isUrl),
+  openFile: (filePath: string) => ipcRenderer.send('open-file', filePath),
+  sendTextOffer: (text: string, isUrl: boolean) => ipcRenderer.invoke('send-text-offer', text, isUrl),
   readClipboardImageAndOffer: () => ipcRenderer.invoke('read-clipboard-image-and-offer'),
+  getSaveDir: () => ipcRenderer.invoke('get-save-dir'),
+  selectSaveDir: () => ipcRenderer.invoke('select-save-dir'),
+  setSaveDir: (dirPath: string) => ipcRenderer.invoke('set-save-dir', dirPath),
   
   // 监听主进程推送的数据流事件
   onServerLog: (callback: (data: any) => void) => {

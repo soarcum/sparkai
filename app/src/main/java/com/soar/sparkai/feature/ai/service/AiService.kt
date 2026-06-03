@@ -51,17 +51,44 @@ object AiService {
         model: String,
         promptText: String,
         bitmap: Bitmap?,
-        history: List<AiMessage>
+        history: List<AiMessage>,
+        temperature: Double? = null,
+        stop: List<String>? = null,
+        frequencyPenalty: Double? = null,
+        presencePenalty: Double? = null,
+        thinkingType: String? = null
     ): Flow<String> = flow {
         // 构建规范的 completions 网关 URL
         val url = "${baseUrl.trim().removeSuffix("/")}/chat/completions"
         
         // 智能多模态自动升级
-        val modelToUse = if (bitmap != null) "mimo-v2.5" else model
+        val modelToUse = model.ifEmpty { if (bitmap != null) "mimo-v2.5" else "mimo-v2.5-pro" }
 
         val reqObj = JSONObject()
         reqObj.put("model", modelToUse)
         reqObj.put("stream", true)
+
+        if (temperature != null) {
+            reqObj.put("temperature", temperature)
+        }
+        if (stop != null && stop.isNotEmpty()) {
+            val stopArr = JSONArray()
+            stop.forEach { stopArr.put(it) }
+            reqObj.put("stop", stopArr)
+        } else {
+            reqObj.put("stop", JSONObject.NULL)
+        }
+        if (frequencyPenalty != null) {
+            reqObj.put("frequency_penalty", frequencyPenalty)
+        }
+        if (presencePenalty != null) {
+            reqObj.put("presence_penalty", presencePenalty)
+        }
+        if (thinkingType != null) {
+            val thinkingObj = JSONObject()
+            thinkingObj.put("type", thinkingType)
+            reqObj.put("thinking", thinkingObj)
+        }
 
         val messagesArr = JSONArray()
 
@@ -165,7 +192,7 @@ object AiService {
                         if (choices != null && choices.length() > 0) {
                             val deltaObj = choices.getJSONObject(0).optJSONObject("delta")
                             val content = deltaObj?.optString("content") ?: ""
-                            if (content.isNotEmpty()) {
+                            if (content.isNotEmpty() && content != "null") {
                                 emit(content)
                             }
                         }

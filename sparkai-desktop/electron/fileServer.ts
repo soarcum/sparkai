@@ -5,10 +5,85 @@ import os from 'os'
 import { BrowserWindow } from 'electron'
 import dgram from 'dgram'
 
-// 手机上传的文件默认保存路径 (用户桌面的 SparkAI-Files)
-export const SAVE_DIR = path.join(os.homedir(), 'Desktop', 'SparkAI-Files')
-if (!fs.existsSync(SAVE_DIR)) {
-  fs.mkdirSync(SAVE_DIR, { recursive: true })
+// 手机上传的文件保存路径配置与获取
+let currentSaveDir = ''
+
+export function getSaveDir(): string {
+  if (currentSaveDir) {
+    return currentSaveDir
+  }
+  const defaultDir = path.join(os.homedir(), 'Desktop', 'SparkAI-Files')
+  try {
+    const configPath = path.join(os.homedir(), '.sparkai-desktop-config.json')
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (config.saveDir) {
+        currentSaveDir = config.saveDir
+        if (!fs.existsSync(currentSaveDir)) {
+          fs.mkdirSync(currentSaveDir, { recursive: true })
+        }
+        return currentSaveDir
+      }
+    }
+  } catch (e) {
+    // 忽略
+  }
+  currentSaveDir = defaultDir
+  if (!fs.existsSync(currentSaveDir)) {
+    fs.mkdirSync(currentSaveDir, { recursive: true })
+  }
+  return currentSaveDir
+}
+
+export function setSaveDir(dirPath: string) {
+  currentSaveDir = dirPath
+  if (currentSaveDir && !fs.existsSync(currentSaveDir)) {
+    try {
+      fs.mkdirSync(currentSaveDir, { recursive: true })
+    } catch (e) {}
+  }
+  try {
+    const configPath = path.join(os.homedir(), '.sparkai-desktop-config.json')
+    let config: any = {}
+    if (fs.existsSync(configPath)) {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    }
+    config.saveDir = dirPath
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+  } catch (e) {
+    // 忽略
+  }
+}
+
+// 辅助函数：将文本保存到本地接收目录中并返回文件路径和文件名
+function saveTextToFile(text: string, type: 'Receive' | 'Send'): { filePath: string; fileName: string } {
+  const activeSaveDir = getSaveDir()
+  if (!fs.existsSync(activeSaveDir)) {
+    try {
+      fs.mkdirSync(activeSaveDir, { recursive: true })
+    } catch (e) {}
+  }
+  
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+  const timestamp = `${year}${month}${day}_${hours}${minutes}${seconds}`
+  
+  // 提取文本前15个字符作为文件名的一部分，并清理非法字符，防止写入失败
+  const safeSnippet = text.slice(0, 15).replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').trim()
+  const fileName = safeSnippet 
+    ? `Text_${type}_${timestamp}_${safeSnippet}.txt`
+    : `Text_${type}_${timestamp}.txt`
+  
+  const filePath = path.join(activeSaveDir, fileName)
+  try {
+    fs.writeFileSync(filePath, text, 'utf-8')
+  } catch (e) {}
+  return { filePath, fileName }
 }
 
 let server: http.Server | null = null
@@ -92,32 +167,43 @@ function handleSSE(req: http.IncomingMessage, res: http.ServerResponse) {
 // 处理手机端上传文件 (HTTP POST)
 function handleUpload(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: URL) {
   const filename = decodeURIComponent(parsedUrl.searchParams.get('filename') || 'uploaded_file')
+  // 过滤 Windows 文件名中的非法字符，防止写入失败
+  const safeFilename = filename.replace(/[\\/:*?"<>|]/g, '_')
   const sizeStr = parsedUrl.searchParams.get('size') || '0'
   const totalSize = parseInt(sizeStr, 10)
   
-  const targetPath = path.join(SAVE_DIR, filename)
+  // 确保保存目录存在
+  const activeSaveDir = getSaveDir()
+  if (!fs.existsSync(activeSaveDir)) {
+    fs.mkdirSync(activeSaveDir, { recursive: true })
+  }
+
+  const targetPath = path.join(activeSaveDir, safeFilename)
   const writeStream = fs.createWriteStream(targetPath)
   let receivedBytes = 0
   let lastProgressTime = 0
 
-  notifyRenderer('server-log', { level: 'INFO', message: `开始接收手机上传文件: ${filename} (${(totalSize / 1024 / 1024).toFixed(2)} MB)` })
+  notifyRenderer('server-log', { level: 'INFO', message: `开始接收手机上传文件: ${safeFilename} (${(totalSize / 1024 / 1024).toFixed(2)} MB)` })
 
   req.on('data', (chunk) => {
     receivedBytes += chunk.length
+    writeStream.write(chunk)
     const now = Date.now()
     if (now - lastProgressTime > 200 || receivedBytes === totalSize) {
       lastProgressTime = now
-      notifyRenderer('transfer-progress', { filename, type: 'receive', progress: Math.min(100, (receivedBytes / totalSize) * 100), bytes: receivedBytes })
+      notifyRenderer('transfer-progress', { filename: safeFilename, type: 'receive', progress: Math.min(100, (receivedBytes / totalSize) * 100), bytes: receivedBytes })
     }
   })
 
-  req.pipe(writeStream)
+  req.on('end', () => {
+    writeStream.end()
+  })
 
   writeStream.on('finish', () => {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
     res.end(JSON.stringify({ success: true, message: 'File saved successfully' }))
     notifyRenderer('server-log', { level: 'SUCCESS', message: `手机上传文件成功保存至: ${targetPath}` })
-    notifyRenderer('file-received', { name: filename, size: totalSize, path: targetPath, time: new Date().toLocaleTimeString() })
+    notifyRenderer('file-received', { name: safeFilename, size: totalSize, path: targetPath, time: new Date().toLocaleTimeString() })
   })
 
   writeStream.on('error', (err) => {
@@ -153,6 +239,7 @@ function handleDownload(req: http.IncomingMessage, res: http.ServerResponse, par
 
   readStream.on('data', (chunk) => {
     sentBytes += chunk.length
+    res.write(chunk)
     const now = Date.now()
     if (now - lastProgressTime > 200 || sentBytes === item.size) {
       lastProgressTime = now
@@ -160,7 +247,13 @@ function handleDownload(req: http.IncomingMessage, res: http.ServerResponse, par
     }
   })
 
-  readStream.pipe(res)
+  readStream.on('end', () => {
+    res.end()
+  })
+
+  readStream.on('error', (err) => {
+    notifyRenderer('server-log', { level: 'WARN', message: `推送文件给手机失败: ${err.message}` })
+  })
 }
 
 // 处理手机端分享的文本/链接 (HTTP POST)
@@ -174,8 +267,25 @@ function handleShareText(req: http.IncomingMessage, res: http.ServerResponse) {
       const json = JSON.parse(body)
       const text = json.text || ''
       const isUrl = text.startsWith('http://') || text.startsWith('https://')
-      notifyRenderer('server-log', { level: 'SUCCESS', message: `收到手机分享的文本: ${text.length > 30 ? text.substring(0, 30) + '...' : text}` })
-      notifyRenderer('text-received', { text, isUrl, time: new Date().toLocaleTimeString(), type: 'receive' })
+      
+      let filePath = ''
+      let fileName = ''
+      try {
+        const saved = saveTextToFile(text, 'Receive')
+        filePath = saved.filePath
+        fileName = saved.fileName
+      } catch (e) {
+        console.error('[Save Text Error]', e)
+      }
+
+      notifyRenderer('server-log', { 
+        level: 'SUCCESS', 
+        message: fileName 
+          ? `收到手机分享的文本并保存为TXT: ${fileName}` 
+          : `收到手机分享的文本: ${text.length > 30 ? text.substring(0, 30) + '...' : text}` 
+      })
+      notifyRenderer('text-received', { text, isUrl, time: new Date().toLocaleTimeString(), type: 'receive', savedPath: filePath })
+      
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
       res.end(JSON.stringify({ success: true }))
     } catch (err: any) {
@@ -216,10 +326,25 @@ function handleAudioStream(req: http.IncomingMessage, res: http.ServerResponse) 
 }
 
 // 广播文本或链接要约给手机端
-export function broadcastTextOffer(text: string, isUrl: boolean) {
+export function broadcastTextOffer(text: string, isUrl: boolean): string {
   const id = Math.random().toString(36).substring(2, 10)
   broadcastSSE('text-offer', { id, text, isUrl })
+  
+  let filePath = ''
+  let fileName = ''
+  try {
+    const saved = saveTextToFile(text, 'Send')
+    filePath = saved.filePath
+    fileName = saved.fileName
+  } catch (e) {
+    console.error('[Save Text Error]', e)
+  }
+
   notifyRenderer('server-log', { level: 'INFO', message: `已向手机端广播文本要约: ${text.length > 30 ? text.substring(0, 30) + '...' : text}` })
+  if (fileName) {
+    notifyRenderer('server-log', { level: 'SUCCESS', message: `发送的文本已自动备份为TXT: ${fileName}` })
+  }
+  return filePath
 }
 
 // 注册待发送文件的要约

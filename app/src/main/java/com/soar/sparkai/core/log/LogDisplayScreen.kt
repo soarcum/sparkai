@@ -16,8 +16,11 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.soar.sparkai.feature.transfer.FileTransferManager
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +39,7 @@ import androidx.compose.ui.unit.sp
 fun LogDisplayScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val rawLogs by AppLogger.logsFlow.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     
     var searchQuery by remember { mutableStateOf("") }
     var selectedLevel by remember { mutableStateOf("ALL") }
@@ -58,6 +62,38 @@ fun LogDisplayScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Rounded.ArrowBack, "返回", tint = Color.White)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        coroutineScope.launch {
+                            val prefs = context.getSharedPreferences("sparkai_transfer_prefs", Context.MODE_PRIVATE)
+                            val ip = prefs.getString("last_connected_ip", null)
+                            val portStr = prefs.getString("last_connected_port", null)
+                            val port = portStr?.toIntOrNull() ?: 19090
+                            if (ip.isNullOrBlank()) {
+                                Toast.makeText(context, "⚠️ 请先在文件互传中连接一次电脑端", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(context, "📤 正在上传日志到电脑端...", Toast.LENGTH_SHORT).show()
+                                FileTransferManager.uploadLogFile(
+                                    context = context,
+                                    ip = ip,
+                                    port = port,
+                                    onSuccess = {
+                                        (context as? android.app.Activity)?.runOnUiThread {
+                                            Toast.makeText(context, "🎉 日志已成功上传至电脑端！", Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    onError = { err ->
+                                        (context as? android.app.Activity)?.runOnUiThread {
+                                            Toast.makeText(context, "❌ 日志上传失败: $err", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }) {
+                        Icon(Icons.Rounded.CloudUpload, "传至电脑", tint = Color.White)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF1E1E2F))

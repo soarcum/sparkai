@@ -40,6 +40,7 @@ class FileTransferViewModel : ViewModel() {
     var transferList by mutableStateOf<List<TransferItem>>(emptyList())
     var activeOffer by mutableStateOf<TransferItem?>(null)
     var isAudioStreaming by mutableStateOf(false)
+    var isAutoConnect by mutableStateOf(false)
 
     private var connectionJob: Job? = null
     private var audioJob: Job? = null
@@ -172,7 +173,7 @@ class FileTransferViewModel : ViewModel() {
     fun uploadSelectedFile(context: Context, uri: Uri) {
         val filename = getFileName(context, uri)
         val size = getFileSize(context, uri)
-        val taskId = (Math.random() * Int.MAX_VALUE).toInt().toString(36).substring(2, 10)
+        val taskId = java.util.UUID.randomUUID().toString().substring(0, 8)
         
         val newItem = TransferItem(
             id = taskId,
@@ -196,19 +197,25 @@ class FileTransferViewModel : ViewModel() {
                 },
                 onSuccess = {
                     updateItemStatus(taskId, TransferStatus.SUCCESS)
+                    viewModelScope.launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "📤 文件已成功发送至电脑端！", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onError = { err ->
                     updateItemStatus(taskId, TransferStatus.FAILED, err)
+                    viewModelScope.launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "❌ 文件发送失败: $err", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }
     }
 
     // 发送文本/链接给电脑端
-    fun sendText(text: String) {
+    fun sendText(context: Context, text: String) {
         if (text.isBlank()) return
         val isLink = text.startsWith("http://") || text.startsWith("https://")
-        val taskId = (Math.random() * Int.MAX_VALUE).toInt().toString(36).substring(2, 10)
+        val taskId = java.util.UUID.randomUUID().toString().substring(0, 8)
         
         val newItem = TransferItem(
             id = taskId,
@@ -228,9 +235,15 @@ class FileTransferViewModel : ViewModel() {
                 text = text,
                 onSuccess = {
                     updateItemStatus(taskId, TransferStatus.SUCCESS)
+                    viewModelScope.launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "📤 文本已成功发送至电脑端！", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onError = { err ->
                     updateItemStatus(taskId, TransferStatus.FAILED, err)
+                    viewModelScope.launch(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "❌ 文本发送失败: $err", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }
@@ -269,14 +282,18 @@ class FileTransferViewModel : ViewModel() {
     }
 
     private fun updateItemProgress(id: String, progress: Float) {
-        transferList = transferList.map {
-            if (it.id == id) it.copy(progress = progress, speed = "${(progress).toInt()}%") else it
+        viewModelScope.launch(Dispatchers.Main) {
+            transferList = transferList.map {
+                if (it.id == id) it.copy(progress = progress, speed = "${(progress).toInt()}%") else it
+            }
         }
     }
 
     private fun updateItemStatus(id: String, status: TransferStatus, error: String? = null) {
-        transferList = transferList.map {
-            if (it.id == id) it.copy(status = status, error = error, speed = if (status == TransferStatus.SUCCESS) "完成" else "失败") else it
+        viewModelScope.launch(Dispatchers.Main) {
+            transferList = transferList.map {
+                if (it.id == id) it.copy(status = status, error = error, speed = if (status == TransferStatus.SUCCESS) "完成" else "失败") else it
+            }
         }
     }
 
@@ -397,12 +414,27 @@ class FileTransferViewModel : ViewModel() {
             val prefs = context.getSharedPreferences("sparkai_transfer_prefs", Context.MODE_PRIVATE)
             val savedIp = prefs.getString("last_connected_ip", null)
             val savedPort = prefs.getString("last_connected_port", null)
+            isAutoConnect = prefs.getBoolean("auto_connect", false)
             if (!savedIp.isNullOrBlank()) {
                 ip = savedIp
             }
             if (!savedPort.isNullOrBlank()) {
                 port = savedPort
             }
+            if (isAutoConnect && !isConnected && !isConnecting && !savedIp.isNullOrBlank()) {
+                connect(context)
+            }
+        } catch (e: Exception) {
+            // 忽略
+        }
+    }
+
+    // 设置是否开启自动连接
+    fun setAutoConnectEnabled(context: Context, enabled: Boolean) {
+        isAutoConnect = enabled
+        try {
+            val prefs = context.getSharedPreferences("sparkai_transfer_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("auto_connect", enabled).apply()
         } catch (e: Exception) {
             // 忽略
         }

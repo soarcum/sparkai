@@ -10,3 +10,19 @@
 local.properties
 /app/build
 /.gradle
+
+# Temp scripts, jars, and logs from development
+app_running_log.txt
+cfr.jar
+combine_all_fragments.py
+decompiled_floating_service.java
+decompiled_utf8.java
+extracted_max_service.txt
+find_max_lines.py
+local_test_screen.png
+logcat_recent.txt
+recover.py
+recovered_floating_service.kt
+recovered_sources.txt
+sparkai_pid_log.txt
+test_helper.py

@@ -24,6 +24,10 @@ class ProgressRequestBody(
         return contentLength
     }
 
+    override fun isOneShot(): Boolean {
+        return true
+    }
+
     override fun writeTo(sink: BufferedSink) {
         val buffer = ByteArray(8192)
         var bytesWritten = 0L

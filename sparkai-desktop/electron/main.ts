@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, dialog, shell, clipboard } from 'electron'
-import { startFileServer, stopFileServer, getIPAddresses, registerFileOffer, broadcastSSE, SAVE_DIR, broadcastTextOffer } from './fileServer'
+import { startFileServer, stopFileServer, getIPAddresses, registerFileOffer, broadcastSSE, getSaveDir, setSaveDir, broadcastTextOffer } from './fileServer'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -160,18 +160,62 @@ ipcMain.handle('select-and-send-file', async () => {
       size: stat.size
     })
     
-    return { success: true, filename, size: stat.size }
+    return { success: true, filename, size: stat.size, filePath }
   } catch (err: any) {
     return { success: false, error: err.message }
   }
 })
 
 ipcMain.on('open-save-dir', () => {
-  shell.openPath(SAVE_DIR)
+  shell.openPath(getSaveDir())
 })
 
-ipcMain.on('send-text-offer', (_, text: string, isUrl: boolean) => {
-  broadcastTextOffer(text, isUrl)
+ipcMain.on('open-file', (_, filePath: string) => {
+  if (filePath && fs.existsSync(filePath)) {
+    shell.showItemInFolder(filePath)
+  }
+})
+
+ipcMain.handle('get-save-dir', () => {
+  let customPath = ''
+  try {
+    const configPath = path.join(os.homedir(), '.sparkai-desktop-config.json')
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      customPath = config.saveDir || ''
+    }
+  } catch (e) {}
+  
+  return {
+    customPath,
+    defaultPath: path.join(os.homedir(), 'Desktop', 'SparkAI-Files'),
+    activePath: getSaveDir()
+  }
+})
+
+ipcMain.handle('select-save-dir', async () => {
+  if (!mainWindow) return { success: false, error: '主窗口未创建' }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择接收文件的保存目录',
+    properties: ['openDirectory']
+  })
+  if (result.canceled || result.filePaths.length === 0) {
+    return { success: false, cancelled: true }
+  }
+  return { success: true, path: result.filePaths[0] }
+})
+
+ipcMain.handle('set-save-dir', (_, dirPath: string) => {
+  try {
+    setSaveDir(dirPath)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('send-text-offer', (_, text: string, isUrl: boolean) => {
+  return broadcastTextOffer(text, isUrl)
 })
 
 ipcMain.handle('read-clipboard-image-and-offer', async () => {

@@ -32,12 +32,21 @@
         <div class="space-y-6">
           <div class="px-2 text-xs font-semibold tracking-wider text-brand-textMuted uppercase">核心控制面板</div>
           <nav class="space-y-1.5">
-            <a v-for="(item, idx) in menuItems" :key="idx" href="#" @click="currentTab = idx"
-               :class="[currentTab === idx ? 'bg-gradient-to-r from-brand-primary/20 to-brand-secondary/5 border-l-2 border-brand-secondary text-brand-text' : 'border-l-2 border-transparent text-brand-textMuted hover:text-brand-text hover:bg-white/5']"
-               class="flex items-center space-x-3 px-3 py-2.5 rounded-r-md text-sm transition-all duration-200">
-              <component :is="item.icon" class="w-4 h-4" />
-              <span>{{ item.name }}</span>
-            </a>
+            <template v-for="(item, idx) in menuItems" :key="idx">
+              <a href="#" @click="currentTab = idx"
+                 :class="[currentTab === idx ? 'bg-gradient-to-r from-brand-primary/20 to-brand-secondary/5 border-l-2 border-brand-secondary text-brand-text' : 'border-l-2 border-transparent text-brand-textMuted hover:text-brand-text hover:bg-white/5']"
+                 class="flex items-center space-x-3 px-3 py-2.5 rounded-r-md text-sm transition-all duration-200">
+                <component :is="item.icon" class="w-4 h-4" />
+                <span>{{ item.name }}</span>
+              </a>
+              <!-- 局域网互传子目录 -->
+              <div v-if="idx === 1 && currentTab === 1" class="pl-8 pr-2 py-1 space-y-1 border-l border-white/5 ml-5 mt-1 pb-2">
+                <a v-for="sub in transferSubMenus" :key="sub.id" href="#" @click.prevent="scrollToSection(sub.id)"
+                   class="block py-1 text-[11px] text-brand-textMuted hover:text-brand-secondary hover:translate-x-0.5 transition-all duration-200 font-medium">
+                  {{ sub.name }}
+                </a>
+              </div>
+            </template>
           </nav>
         </div>
 
@@ -52,7 +61,7 @@
       </aside>
 
       <!-- 右侧主内容区 -->
-      <main class="flex-1 p-6 overflow-y-auto flex flex-col space-y-6">
+      <main class="flex-1 p-6 overflow-hidden flex flex-col space-y-6">
         <!-- Tab 0: 引擎概览 -->
         <template v-if="currentTab === 0">
           <!-- 头部渐变欢迎卡片 -->
@@ -145,14 +154,71 @@
           <FileTransfer :serverRunning="serverRunning" :ips="ips" :port="port" />
         </template>
 
-        <!-- Tab 2: 参数配置 -->
+        <!-- Tab 2: AI 动态模块 -->
         <template v-else-if="currentTab === 2">
-          <div class="p-6 rounded-2xl glass-panel border border-brand-border space-y-4">
-            <h3 class="text-base font-bold text-white">⚙ 通信与代理参数配置</h3>
-            <p class="text-xs text-brand-textMuted">默认局域网握手端口为 19090。如遇端口冲突，系统将在后台自动递增匹配可用通信通道，无需手动修改任何参数。</p>
+          <AIScriptManager />
+        </template>
+
+        <!-- Tab 3: 参数配置 -->
+        <template v-else-if="currentTab === 3">
+          <div class="p-6 rounded-2xl glass-panel border border-brand-border space-y-6 max-w-3xl shrink-0">
+            <div class="border-b border-brand-border pb-3">
+              <h3 class="text-base font-bold text-white flex items-center space-x-2">
+                <svg class="w-5 h-5 text-brand-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>系统与通信参数配置</span>
+              </h3>
+              <p class="text-xs text-brand-textMuted mt-1">定制您的局域网互传与软件底座运行环境参数</p>
+            </div>
+
+            <!-- 文件夹路径设置板块 -->
+            <div class="space-y-3">
+              <label class="text-xs font-semibold text-brand-secondary uppercase tracking-wider block">📁 局域网互传文件保存目录</label>
+              <p class="text-xs text-brand-textMuted leading-relaxed">
+                手机端向电脑端传输的文件、文本或截图，在接收成功后会永久保存在此目录中。如果保持为空，系统将自动使用默认路径存放。
+              </p>
+              
+              <div class="flex items-center space-x-3 mt-2">
+                <input type="text" v-model="saveDirInput" readonly placeholder="使用默认路径 (桌面的 SparkAI-Files)" 
+                       class="flex-1 px-3 py-2.5 rounded-xl border border-white/10 bg-black/40 text-xs text-gray-200 outline-none select-all font-mono" />
+                
+                <button @click="selectFolder" 
+                        class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-brand-secondary to-brand-primary text-white font-semibold text-xs transition-all duration-200 active:scale-95 hover:shadow-glow-cyan shrink-0">
+                  选择目录
+                </button>
+                <button @click="resetToDefaultFolder" :disabled="!saveDirInput"
+                        class="px-4 py-2.5 rounded-xl border border-white/10 hover:border-red-500/30 bg-white/5 text-brand-textMuted hover:text-red-400 font-semibold text-xs transition-all duration-200 active:scale-95 disabled:opacity-30 disabled:pointer-events-none shrink-0">
+                  重置默认
+                </button>
+              </div>
+              <span v-if="saveDirInput" class="text-[10px] text-emerald-400 font-mono block mt-1">✔ 当前配置已成功保存并立即生效</span>
+              <span v-else class="text-[10px] text-brand-textMuted font-mono block mt-1">ℹ 默认路径为：{{ defaultSaveDirPreview }}</span>
+            </div>
+
+            <!-- 分割线 -->
+            <div class="border-t border-brand-border"></div>
+
+            <!-- 原端口提示 -->
+            <div class="space-y-2">
+              <label class="text-xs font-semibold text-brand-textMuted uppercase tracking-wider block">🌐 局域网服务通信端口</label>
+              <p class="text-xs text-brand-textMuted leading-relaxed">
+                默认局域网握手端口为 <span class="font-mono text-brand-secondary font-bold">{{ port }}</span>。如遇端口冲突，系统将在后台自动递增分配可用通信通道，无需手动修改任何参数。
+              </p>
+            </div>
           </div>
         </template>
       </main>
+      
+      <!-- 悬浮微光 Toast 通知 -->
+      <Transition name="toast">
+        <div v-if="toastActive" :class="[toastType === 'success' ? 'border-emerald-500/30 bg-emerald-950/80 text-emerald-300 shadow-emerald-500/10' : toastType === 'error' ? 'border-red-500/30 bg-red-950/80 text-red-300 shadow-red-500/10' : toastType === 'warn' ? 'border-amber-500/30 bg-amber-950/80 text-amber-300 shadow-amber-500/10' : 'border-brand-border bg-black/80 text-brand-secondary shadow-brand-secondary/5']" 
+             class="fixed bottom-6 right-6 px-4.5 py-3 rounded-xl border backdrop-blur-md shadow-2xl flex items-center space-x-3 z-50 text-xs font-semibold animate-scale-in">
+          <span class="w-2 h-2 rounded-full animate-ping" :class="[toastType === 'success' ? 'bg-emerald-400' : toastType === 'error' ? 'bg-red-400' : toastType === 'warn' ? 'bg-amber-400' : 'bg-brand-secondary']"></span>
+          <span>{{ toastMsg }}</span>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -160,6 +226,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, shallowRef } from 'vue'
 import FileTransfer from '@/components/FileTransfer.vue'
+import AIScriptManager from '@/components/AIScriptManager.vue'
+import { initModules } from '@/modules/ai-script/store'
 import QRCode from 'qrcode'
 
 // SVG 图标组件，使用 shallowRef 提升渲染性能
@@ -180,6 +248,9 @@ const NetworkIcon = shallowRef({
 })
 const ShareIcon = shallowRef({
   template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>`
+})
+const MagicIcon = shallowRef({
+  template: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.813 15.904L9 21l8.982-11.725h-5.228l.836-5.092L4.5 15.904h5.313z" /></svg>`
 })
 
 const serverRunning = ref(false)
@@ -213,8 +284,21 @@ const logContainer = ref<HTMLElement | null>(null)
 const menuItems = [
   { name: '引擎概览', icon: HomeIcon },
   { name: '局域网互传', icon: ShareIcon },
+  { name: 'AI 动态模块', icon: MagicIcon },
   { name: '参数配置', icon: SettingsIcon }
 ]
+
+const transferSubMenus = [
+  { name: '连接与网卡配置', id: 'transfer-connection' },
+  { name: '无线麦克风投音', id: 'transfer-mic' },
+  { name: '选择与拖拽发送', id: 'transfer-send' },
+  { name: '剪贴板与文本共享', id: 'transfer-clipboard' },
+  { name: '极速互传历史记录', id: 'transfer-records' }
+]
+
+const scrollToSection = (id: string) => {
+  window.dispatchEvent(new CustomEvent('scroll-to-transfer-section', { detail: { id } }))
+}
 
 // 监控数据定义
 const systemStats = ref([
@@ -286,9 +370,70 @@ const simulateData = () => {
   }
 }
 
+// 极光悬浮 Toast 状态
+const toastActive = ref(false)
+const toastMsg = ref('')
+const toastType = ref('info')
+let toastTimer: number | null = null
+
+const triggerToast = (msg: string, type = 'info') => {
+  toastMsg.value = msg
+  toastType.value = type
+  toastActive.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => {
+    toastActive.value = false
+  }, 4000)
+}
+
+let handleAamsToast: (e: any) => void
+
+const saveDirInput = ref('')
+const defaultSaveDirPreview = ref('')
+
+const selectFolder = async () => {
+  if (window.electronAPI) {
+    const res = await window.electronAPI.selectSaveDir()
+    if (res?.success && res?.path) {
+      saveDirInput.value = res.path
+      await window.electronAPI.setSaveDir(res.path)
+      triggerToast('✔ 互传文件保存目录已更新且生效', 'success')
+      addLog('SUCCESS', `互传保存目录已变更为: ${res.path}`)
+    }
+  }
+}
+
+const resetToDefaultFolder = async () => {
+  if (window.electronAPI) {
+    saveDirInput.value = ''
+    await window.electronAPI.setSaveDir('')
+    triggerToast('✔ 互传文件保存目录已恢复为默认', 'success')
+    addLog('SUCCESS', '互传保存目录已恢复为桌面默认路径')
+  }
+}
+
 onMounted(async () => {
   updateTimer = window.setInterval(simulateData, 3000)
   addLog('INFO', '数据模拟刷新与心跳服务已上线')
+
+  if (window.electronAPI) {
+    window.electronAPI.getSaveDir().then(res => {
+      saveDirInput.value = res.customPath || ''
+      defaultSaveDirPreview.value = res.defaultPath || ''
+    }).catch(() => {})
+  }
+
+  handleAamsToast = (e: any) => {
+    if (e.detail && e.detail.message) {
+      triggerToast(e.detail.message, e.detail.type)
+      const logTag = e.detail.type === 'success' ? 'SUCCESS' : e.detail.type === 'warn' ? 'WARN' : 'INFO'
+      addLog(logTag as any, `[AI模块] ${e.detail.message}`)
+    }
+  }
+  window.addEventListener('aams-toast', handleAamsToast)
+  
+  // 初始化加载已启用的 AI 自动模块
+  initModules()
 
   if (window.electronAPI) {
     addLog('INFO', '正在拉起局域网极速互传服务器...')
@@ -314,5 +459,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (updateTimer) clearInterval(updateTimer)
+  if (handleAamsToast) {
+    window.removeEventListener('aams-toast', handleAamsToast)
+  }
 })
 </script>

@@ -72,3 +72,20 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - 桌面端构建工作流（build-desktop.yml）已改为仅 `workflow_dispatch`（手动触发）
 - 如需打包桌面端，先询问用户确认，再手动触发工作流
 - 桌面端构建目前存在问题（electron-builder 在 CI 环境持续失败），需进一步排查
+
+## 6. 本地无线调试与功能验证规范
+
+当新功能完成或 Bug 修复后，**严禁**直接推送到 GitHub 触发漫长的打包。必须使用本地无线调试工具进行秒级部署与自动截图验证：
+
+### ⚙️ 调试辅助脚本：`test_helper.py`
+项目根目录下提供了本地联调的集成工具 `test_helper.py`：
+- **连接设备**：`python test_helper.py connect <IP:PORT>` (如连接 `192.168.110.32:40445`)
+- **一键打包部署**：`python test_helper.py deploy` (一键执行 Gradle 本地增量打包、无线推送安装至真机并自动拉起应用)
+- **真机截图**：`python test_helper.py screenshot` (实时截取手机屏幕并拉取到项目根目录下，方便 AI 助手展示在聊天中进行 UI 验证)
+- **拉取错误日志**：`python test_helper.py logcat` (实时拉取真机底层的崩溃与报错日志)
+
+### 📋 AI 助手本地测试准则
+1. **本地调试优先**：修改代码后，AI 助手必须在后台启动 `python test_helper.py deploy` 部署至用户的已连接手机，确保本地编译成功且没有运行 Crash。
+2. **提交成果前提供截图**：功能开发完毕后，AI 助手必须主动运行 `python test_helper.py screenshot` 截取真机首屏/操作界面，并在对话中通过 Markdown 渲染展示给用户进行直观确认。
+3. **遇到闪退主动排查**：若用户测试反馈闪退，AI 助手必须在第一时间内执行 `python test_helper.py logcat` 捕获报错堆栈并主动修复，严禁无声吞没错误。
+

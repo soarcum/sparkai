@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SparkAI</string>
+    <string name="accessibility_service_name">SparkAI 自动化授权助手</string>
+    <string name="accessibility_service_description">用于自动确认系统投屏与截图授权弹窗，免除反复手动确认，提供无缝的静默 AI 分析体验。</string>
 </resources>

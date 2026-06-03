@@ -57,6 +57,9 @@ import com.soar.sparkai.core.log.AppLogger
 import com.soar.sparkai.feature.floatwindow.service.FloatingService
 import com.soar.sparkai.feature.transfer.ui.FileTransferScreen
 import com.soar.sparkai.feature.ai.ui.AiChatScreen
+import com.soar.sparkai.feature.ai.ui.AamsModuleScreen
+import com.soar.sparkai.feature.accessibility.util.AccessibilityUtils
+import android.widget.Toast
 
 @Composable
 fun HomeScreen() {
@@ -67,6 +70,8 @@ fun HomeScreen() {
 
     // 悬浮服务实际运行状态
     var isServiceActive by remember { mutableStateOf(FloatingService.isServiceRunning) }
+    // 无障碍服务实际开启状态
+    var isAccessibilityActive by remember { mutableStateOf(AccessibilityUtils.isAccessibilityServiceEnabled(context)) }
     // 悬浮窗权限说明弹窗控制
     var showPermissionDialog by remember { mutableStateOf(false) }
 
@@ -76,6 +81,9 @@ fun HomeScreen() {
     } else if (currentScreen == "ai") {
         AiChatScreen(onBack = { currentScreen = "home" })
         return
+    } else if (currentScreen == "aams") {
+        AamsModuleScreen(onBack = { currentScreen = "home" })
+        return
     }
 
     // 监听应用前后台切换，从系统设置返回时能够立即感知并刷新状态
@@ -83,6 +91,7 @@ fun HomeScreen() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 isServiceActive = FloatingService.isServiceRunning
+                isAccessibilityActive = AccessibilityUtils.isAccessibilityServiceEnabled(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -243,6 +252,115 @@ fun HomeScreen() {
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            // ================== AI 自动化授权助手（无障碍）卡片 ==================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E2F)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 带有渐变效果的高端闪电图标（代表极速自动授权）
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(Color(0xFF00B894), Color(0xFF00CEC9))
+                                    ),
+                                    shape = RoundedCornerShape(14.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Bolt,
+                                contentDescription = "无障碍",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "AI 自动化授权助手",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            // 动态渲染状态指示器（带色彩渐变的 Badge）
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (isAccessibilityActive) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked,
+                                    contentDescription = "状态",
+                                    tint = if (isAccessibilityActive) Color(0xFF00B894) else Color.White.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isAccessibilityActive) "自动代点已激活" else "未开启",
+                                    fontSize = 12.sp,
+                                    color = if (isAccessibilityActive) Color(0xFF00B894) else Color.White.copy(alpha = 0.4f),
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        // 极简现代的 Switch 控制器
+                        Switch(
+                            checked = isAccessibilityActive,
+                            onCheckedChange = { isChecked ->
+                                AppLogger.i("HomeScreen", "用户切换自动化授权开关 -> $isChecked")
+                                try {
+                                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                                    context.startActivity(intent)
+                                    Toast.makeText(
+                                        context, 
+                                        if (isChecked) "请在已下载的应用/服务列表中开启“SparkAI 自动化授权助手”" else "请在已下载的应用/服务列表中关闭“SparkAI 自动化授权助手”", 
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                } catch (e: Exception) {
+                                    AppLogger.e("HomeScreen", "无法打开系统无障碍设置页面", e)
+                                    Toast.makeText(context, "无法跳转至无障碍设置，请手动在系统设置中搜索开启", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = Color(0xFF00B894),
+                                uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                                uncheckedTrackColor = Color.White.copy(alpha = 0.2f),
+                                uncheckedBorderColor = Color.Transparent
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "基于 Android 系统无障碍辅助服务。开启后，每当进行屏幕截图或分析时，助手将瞬间自动同意系统的投屏安全警告弹窗，达成“一次授权后永久后台静默运行”的零打扰体验。",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        lineHeight = 18.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             // ================== 📂 局域网高速互传中心卡片 ==================
             Card(
                 modifier = Modifier
@@ -329,6 +447,52 @@ fun HomeScreen() {
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
                         Text("进入 AI 智能助理", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ================== 🧩 AI 自定义模块中心卡片 ==================
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF1E1E2F)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    Text(
+                        text = "🧩 AI 自定义模块中心",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "SparkAI 独家推出指令模块热装载引擎。支持直接装载大模型为您私人订制的屏幕截图分析指令，例如商品八折求和、均价分析、圈画特定文字等，赋能悬浮助手无限可能。",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.6f),
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            AppLogger.i("HomeScreen", "用户进入 AI 自定义模块控制面板。")
+                            currentScreen = "aams"
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFF1C40F)
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Text("进入 AI 自定义模块", color = Color(0xFF0F0F1A), fontWeight = FontWeight.Bold)
                     }
                 }
             }

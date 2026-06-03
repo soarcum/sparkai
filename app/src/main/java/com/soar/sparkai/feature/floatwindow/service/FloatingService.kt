@@ -20,12 +20,20 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.widget.Toast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.soar.sparkai.MainActivity
 import com.soar.sparkai.core.theme.AppTheme
@@ -35,16 +43,19 @@ import com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity
 import com.soar.sparkai.feature.floatwindow.util.NotificationHelper
 import com.soar.sparkai.feature.floatwindow.util.ScreenshotCache
 import com.soar.sparkai.feature.floatwindow.util.ScreenshotHelper
-import androidx.lifecycle.LifecycleRegistry
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
+import com.soar.sparkai.feature.ai.util.AamsModuleManager
+import com.soar.sparkai.feature.floatwindow.util.AamsFullscreenOverlayManager
+import com.soar.sparkai.feature.floatwindow.util.AamsMatchTesterManager
+import com.soar.sparkai.feature.floatwindow.util.AamsPipelineExecutor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * 悬浮窗核心前台服务
  * 
  * 作用：承载系统的常驻通知，管理悬浮窗在 WindowManager 中的挂载与卸载，
- * 并响应来自 Compose UI 的拖动、吸边、展开控制和截图逻辑。
+ * 并驱动 AI 声明式自定义脚本模块（AAMS）分析、屏幕物理坐标霓虹圈画标注与全屏毛玻璃中控渲染。
  */
 class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner {
 
@@ -59,17 +70,191 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
 
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_RESULT_DATA = "EXTRA_RESULT_DATA"
+        
+        // 动态执行 AI 自定义模块动作标记
+        const val ACTION_EXECUTE_MODULE = "ACTION_EXECUTE_MODULE"
+        const val EXTRA_MODULE_ID = "EXTRA_MODULE_ID"
     }
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var windowManager: WindowManager
     private lateinit var layoutParams: WindowManager.LayoutParams
     private lateinit var composeView: ComposeView
+    
+    // AI 正在后台分析状态标识，用于悬浮球 Loading 指示
+    private var isWidgetLoading by mutableStateOf(false)
+    
+    // 当前正在执行的 AAMS 自定义模块 ID
+    private var activeModuleId: String = ""
 
     // 全局维持单例 MediaProjection 以及常驻虚拟投屏长连接管道
     private var mediaProjection: MediaProjection? = null
     private var projectionCallback: MediaProjection.Callback? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    override val viewModelStore = ViewModelStore()
+
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry = savedStateRegistryController.savedStateRegistry
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        isServiceRunning = false
+        val notification = NotificationHelper.buildNotification(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NotificationHelper.NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+        }
+
+        lifecycleRegistry.currentState = Lifecycle.State.INITIALIZED
+        savedStateRegistryController.performRestore(null)
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
+
+        AppLogger.i("FloatingService", "悬浮服务已创建 (onCreate)，正在初始化系统级悬浮窗口。")
+
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        initLayoutParams()
+        initComposeView()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        val action = intent?.action ?: ACTION_START
+
+        AppLogger.i("FloatingService", "收到前台服务启动指令 (onStartCommand)，动作类型: $action")
+
+        when (action) {
+            ACTION_START -> {
+                isServiceRunning = true
+                showFloatingWindow()
+            }
+            ACTION_TAKE_SCREENSHOT -> {
+                hideFloatingWindow()
+                activeModuleId = ""
+                
+                val reader = imageReader
+                val display = virtualDisplay
+                if (reader != null && display != null) {
+                    AppLogger.i("FloatingService", "复用全局常驻投屏长连接管道，直接进行后台静默截图")
+                    performFastScreenCapture(isFirstTime = false)
+                } else {
+                    val useCache = ScreenshotCache.hasPermission
+                    var projectionFromCache: MediaProjection? = null
+                    if (useCache) {
+                        try {
+                            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                            projectionFromCache = projectionManager.getMediaProjection(
+                                ScreenshotCache.getResultCode(),
+                                ScreenshotCache.getResultData()
+                            )
+                        } catch (e: Exception) {
+                            AppLogger.e("FloatingService", "尝试通过缓存获取 MediaProjection 发生异常: ${e.message}", e)
+                        }
+                    }
+
+                    if (projectionFromCache != null && initProjectionPipeline(projectionFromCache)) {
+                        AppLogger.i("FloatingService", "根据缓存重新建立投屏长连接流水线，直接开始截图。")
+                        performFastScreenCapture(isFirstTime = true)
+                    } else {
+                        AppLogger.i("FloatingService", "投屏长连接不存在且授权缓存失效，弹出系统录屏授权对话框。")
+                        val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                        }
+                        startActivity(startActIntent)
+                    }
+                }
+            }
+            ACTION_TAKE_SCREENSHOT_RESULT -> {
+                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 收到屏幕截图授权回调 ACTION_TAKE_SCREENSHOT_RESULT。")
+                val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
+                val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+                
+                if (resultCode != 0 && resultData != null) {
+                    ScreenshotCache.save(resultCode, resultData)
+                    
+                    try {
+                        val notification = NotificationHelper.buildNotification(this)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            startForeground(
+                                NotificationHelper.NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            )
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            startForeground(
+                                NotificationHelper.NOTIFICATION_ID,
+                                notification,
+                                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                            )
+                        } else {
+                            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
+                        }
+
+                        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                        val projection = projectionManager.getMediaProjection(resultCode, resultData)
+                        
+                        if (projection != null) {
+                            if (initProjectionPipeline(projection)) {
+                                // 核心时序保护：由于 MediaProjection 成功初始化且服务顺利提权，安全销毁透明中转 Activity
+                                com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                                if (activeModuleId.isNotEmpty()) {
+                                    performModuleCapture(activeModuleId, isFirstTime = true)
+                                } else {
+                                    performFastScreenCapture(isFirstTime = true)
+                                }
+                            } else {
+                                com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                                Toast.makeText(this, "[SparkAI] 截图管道建立失败，请重试", Toast.LENGTH_LONG).show()
+                                showFloatingWindow()
+                            }
+                        } else {
+                            com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                            Toast.makeText(this, "[SparkAI] 获取媒体投屏实例失败，请重新授权", Toast.LENGTH_LONG).show()
+                            showFloatingWindow()
+                        }
+                    } catch (e: SecurityException) {
+                        com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 发生系统安全异常 SecurityException", e)
+                        Toast.makeText(this, "截图失败: 缺少媒体投屏特权，请查看日志详情", Toast.LENGTH_LONG).show()
+                        showFloatingWindow()
+                    } catch (e: Exception) {
+                        com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 截图回调发生未知运行时异常: ${e.message}", e)
+                        Toast.makeText(this, "截图失败: 运行时异常 ${e.message}", Toast.LENGTH_LONG).show()
+                        showFloatingWindow()
+                    }
+                } else {
+                    com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+                    showFloatingWindow()
+                }
+            }
+            ACTION_CANCEL_SCREENSHOT -> {
+                showFloatingWindow()
+            }
+            ACTION_EXECUTE_MODULE -> {
+                hideFloatingWindow()
+                val moduleId = intent?.getStringExtra(EXTRA_MODULE_ID) ?: ""
+                AppLogger.i("FloatingService", "准备执行 AAMS 自定义脚本模块，ID: $moduleId")
+                triggerModulePipeline(moduleId)
+            }
+            ACTION_STOP -> {
+                isServiceRunning = false
+                stopSelf()
+            }
+        }
+
+        return START_NOT_STICKY
+    }
 
     /**
      * 设置 MediaProjection 的生命周期监听，在其被系统停止时及时重置状态，保证下次截图能重新授权
@@ -90,7 +275,6 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                     mediaProjection = null
                     projectionCallback = null
 
-                    // 既然投屏已被主动终止，安全合规地将前台服务退回为普通的 specialUse 类型
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                         val notification = NotificationHelper.buildNotification(this@FloatingService)
                         startForeground(
@@ -126,7 +310,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             imageReader = reader
 
-            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 正在调用 projection.createVirtualDisplay 创建虚拟显示，将屏幕图像投射至 Surface...")
+            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 正在调用 projection.createVirtualDisplay 创建虚拟显示...")
             val display = projection.createVirtualDisplay(
                 "SparkAIScreenCapture",
                 width,
@@ -141,7 +325,7 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 已成功建立全局屏幕投屏长连接流水线（VirtualDisplay 开启常驻）。")
             true
         } catch (e: SecurityException) {
-            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] createVirtualDisplay 抛出安全异常(SecurityException)！可能是前台服务类型在底层注册未生效，或授权失效。异常原因: ${e.message}", e)
+            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] createVirtualDisplay 抛出安全异常(SecurityException)！异常原因: ${e.message}", e)
             false
         } catch (e: Exception) {
             AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 建立全局投屏流水线时发生未知崩溃: ${e.message}", e)
@@ -149,204 +333,134 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         }
     }
 
-    // 实现自定义 LifecycleOwner 以保证 ComposeView 挂载在 WindowManager 时能正常进行生命周期驱动
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
-    override val viewModelStore = ViewModelStore()
-
-    override val lifecycle: Lifecycle get() = lifecycleRegistry
-    override val savedStateRegistry: SavedStateRegistry = savedStateRegistryController.savedStateRegistry
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onCreate() {
-        super.onCreate()
-        isServiceRunning = true
-        // 1. 声明并注册前台服务通知，以符合 Android 保活要求
-        val notification = NotificationHelper.buildNotification(this)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NotificationHelper.NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        } else {
-            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
-        }
-
-        // 2. 初始化生命周期和状态恢复组件，使 Compose 能够在 Service 级别正常渲染
-        lifecycleRegistry.currentState = Lifecycle.State.INITIALIZED
-        savedStateRegistryController.performRestore(null)
-        lifecycleRegistry.currentState = Lifecycle.State.CREATED
-
-        AppLogger.i("FloatingService", "悬浮服务已创建 (onCreate)，正在初始化系统级悬浮窗口。")
-
-        // 3. 初始化窗口管理器和布局参数
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        initLayoutParams()
-
-        // 4. 创建 ComposeView 并挂载到 WindowManager
-        initComposeView()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lifecycleRegistry.currentState = Lifecycle.State.STARTED
-        val action = intent?.action ?: ACTION_START
-
-        AppLogger.i("FloatingService", "收到前台服务启动指令 (onStartCommand)，动作类型: $action")
-
-        when (action) {
-            ACTION_START -> {
-                showFloatingWindow()
-            }
-            ACTION_TAKE_SCREENSHOT -> {
-                // 截图第一步：隐藏悬浮窗，避免其自身被截图捕获
-                hideFloatingWindow()
-                
-                // 1. 优先复用当前生命周期中已创建并保持有效的虚拟屏幕长连接管道
-                val reader = imageReader
-                val display = virtualDisplay
-                if (reader != null && display != null) {
-                    AppLogger.i("FloatingService", "复用全局常驻投屏长连接管道，直接进行后台静默截图")
-                    performFastScreenCapture(isFirstTime = false)
-                } else {
-                    // 2. 其次，如果运行在低于 Android 14 并且有本地缓存，尝试复用缓存重新获取并建立管道
-                    val useCache = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ScreenshotCache.hasPermission
-                    var projectionFromCache: MediaProjection? = null
-                    if (useCache) {
-                        try {
-                            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                            projectionFromCache = projectionManager.getMediaProjection(
-                                ScreenshotCache.getResultCode(),
-                                ScreenshotCache.getResultData()
-                            )
-                        } catch (e: Exception) {
-                            AppLogger.e("FloatingService", "尝试通过缓存获取 MediaProjection 发生异常: ${e.message}", e)
-                        }
-                    }
-
-                    if (projectionFromCache != null && initProjectionPipeline(projectionFromCache)) {
-                        AppLogger.i("FloatingService", "根据缓存重新建立投屏长连接流水线，直接开始截图。")
-                        performFastScreenCapture(isFirstTime = true)
-                    } else {
-                        // 3. 无可用管道也无有效缓存，必须弹出透明中转 Activity 获取系统授权
-                        AppLogger.i("FloatingService", "投屏长连接不存在且授权缓存失效，弹出系统录屏授权对话框。")
-                        val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-                        }
-                        startActivity(startActIntent)
-                    }
-                }
-            }
-            ACTION_TAKE_SCREENSHOT_RESULT -> {
-                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 收到屏幕截图授权回调 ACTION_TAKE_SCREENSHOT_RESULT。")
-                val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
-                val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 授权参数解析: resultCode=$resultCode, hasResultData=${resultData != null}")
-                
-                if (resultCode != 0 && resultData != null) {
-                    ScreenshotCache.save(resultCode, resultData)
-                    
-                    try {
-                        // 核心时序修复：必须在调用 getMediaProjection 之前，将前台服务类型升级为 mediaProjection 复合状态！
-                        // 否则在 Android 14+ / 16 (API 36) 中，若服务未获得此类型资质而直接调用 getMediaProjection，系统会瞬间抛出 SecurityException 崩溃！
-                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 1: 正在提升前台服务类型为 mediaProjection|specialUse...")
-                        val notification = NotificationHelper.buildNotification(this)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                            startForeground(
-                                NotificationHelper.NOTIFICATION_ID,
-                                notification,
-                                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                            )
-                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            startForeground(
-                                NotificationHelper.NOTIFICATION_ID,
-                                notification,
-                                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                            )
-                        } else {
-                            startForeground(NotificationHelper.NOTIFICATION_ID, notification)
-                        }
-                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 1 完成: 前台服务提升成功。")
-
-                        // 步骤 2：通过系统服务获取 MediaProjection 实例
-                        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 2: 正在通过系统服务获取 MediaProjection 实例...")
-                        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                        val projection = projectionManager.getMediaProjection(resultCode, resultData)
-                        
-                        if (projection != null) {
-                            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 2 完成: 成功创建 MediaProjection 实例。")
-                            
-                            // 步骤 3：建立投屏长连接管道
-                            AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 3: 正在初始化投屏常驻管道...")
-                            if (initProjectionPipeline(projection)) {
-                                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 时序步骤 3 完成: 常驻管道建立成功。开始后台抓帧。")
-                                performFastScreenCapture(isFirstTime = true)
-                            } else {
-                                AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 错误: 常驻管道初始化失败！")
-                                android.widget.Toast.makeText(this, "[SparkAI] 截图常驻管道建立失败，请重试", android.widget.Toast.LENGTH_LONG).show()
-                                showFloatingWindow()
-                            }
-                        } else {
-                            AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 错误: 系统返回的 MediaProjection 为 null！")
-                            android.widget.Toast.makeText(this, "[SparkAI] 获取媒体投屏实例失败，请重新授权", android.widget.Toast.LENGTH_LONG).show()
-                            showFloatingWindow()
-                        }
-                    } catch (e: SecurityException) {
-                        val explanation = "【截图诊断崩溃排查 - 发生系统安全异常 SecurityException】\n" +
-                                "安卓版本: API ${Build.VERSION.SDK_INT}\n" +
-                                "错误原因: ${e.message}\n" +
-                                "可能原因: 清单文件中没有正确声明或动态获取 FOREGROUND_SERVICE_MEDIA_PROJECTION 权限，或是前台服务注册的 mediaProjection 属性尚未生效。"
-                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] $explanation", e)
-                        android.widget.Toast.makeText(this, "截图失败: 缺少媒体投屏特权，请查看日志详情", android.widget.Toast.LENGTH_LONG).show()
-                        showFloatingWindow()
-                    } catch (e: Exception) {
-                        AppLogger.e("FloatingService", "[SparkAI-Capture-v2] 截图回调发生未知运行时异常: ${e.message}", e)
-                        android.widget.Toast.makeText(this, "截图失败: 运行时异常 ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                        showFloatingWindow()
-                    }
-                } else {
-                    AppLogger.w("FloatingService", "[SparkAI-Capture-v2] 授权参数不合规，拒绝截图。resultCode=$resultCode")
-                    showFloatingWindow()
-                }
-            }
-            ACTION_CANCEL_SCREENSHOT -> {
-                // 用户拒绝了授权，恢复悬浮球显示
-                showFloatingWindow()
-            }
-            ACTION_STOP -> {
-                stopSelf()
-            }
-        }
-
-        return START_NOT_STICKY
-    }
-
     /**
      * 利用全局长连接管道在后台执行极速抓图并保存
      */
     private fun performFastScreenCapture(isFirstTime: Boolean) {
         val reader = imageReader ?: return
-        AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 执行 performFastScreenCapture，准备后台抓取屏幕帧。isFirstTime=$isFirstTime")
-        
         ScreenshotHelper.captureScreenFromPipeline(this, reader, isFirstTime) { success ->
             if (success) {
-                AppLogger.i("FloatingService", "[SparkAI-Capture-v2] 极速静默截图执行成功，图片已成功写入相册。")
+                AppLogger.i("FloatingService", "极速静默截图执行成功，图片已写入相册。")
             } else {
-                AppLogger.w("FloatingService", "[SparkAI-Capture-v2] 极速静默截图执行失败。请查看 ScreenshotHelper 打印日志排查存储或通道异常。")
+                AppLogger.w("FloatingService", "极速静默截图执行失败。")
             }
-            // 重新拉起悬浮球
             showFloatingWindow()
         }
     }
 
     /**
+     * 清理所有已挂载的全屏覆盖层
+     */
+    private fun clearOverlays() {
+        AamsFullscreenOverlayManager.removeFullscreenOverlay(this)
+        AamsMatchTesterManager.removeTesterOverlay(this)
+    }
+
+    /**
+     * 触发特定 AI 模块求和/处理流程
+     */
+    private fun triggerModulePipeline(moduleId: String) {
+        activeModuleId = moduleId
+        val reader = imageReader
+        val display = virtualDisplay
+        if (reader != null && display != null) {
+            AppLogger.i("FloatingService", "[AAMS] 复用全局管道，执行模块 ID: $moduleId")
+            performModuleCapture(moduleId, isFirstTime = false)
+        } else {
+            val useCache = ScreenshotCache.hasPermission
+            var projectionFromCache: MediaProjection? = null
+            if (useCache) {
+                try {
+                    val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                    projectionFromCache = projectionManager.getMediaProjection(
+                        ScreenshotCache.getResultCode(),
+                        ScreenshotCache.getResultData()
+                    )
+                } catch (e: Exception) {
+                    AppLogger.e("FloatingService", "尝试通过缓存获取 MediaProjection 发生异常: ${e.message}", e)
+                }
+            }
+
+            if (projectionFromCache != null && initProjectionPipeline(projectionFromCache)) {
+                AppLogger.i("FloatingService", "[AAMS] 根据缓存重新建立管道，执行模块 ID: $moduleId")
+                performModuleCapture(moduleId, isFirstTime = true)
+            } else {
+                AppLogger.i("FloatingService", "[AAMS] 弹出录屏授权，模块 ID: $moduleId")
+                val startActIntent = Intent(this, ScreenshotActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                }
+                startActivity(startActIntent)
+            }
+        }
+    }
+
+    private fun performModuleCapture(moduleId: String, isFirstTime: Boolean) {
+        val module = AamsModuleManager.getAllModules(this).find { it.id == moduleId }
+        if (module == null) {
+            Toast.makeText(this, "未找到指定的 AI 自定义模块！", Toast.LENGTH_SHORT).show()
+            showFloatingWindow()
+            return
+        }
+
+        if (moduleId == "sys_alignment_tester") {
+            clearOverlays()
+            AamsMatchTesterManager.showAlignmentTesterOverlay(this, this)
+            return
+        }
+
+        // 显示加载层并清空其他层
+        clearOverlays()
+        AamsFullscreenOverlayManager.showLoadingOverlay(this, this, module.name)
+
+        CoroutineScope(Dispatchers.Main).launch {
+            if (isFirstTime) {
+                kotlinx.coroutines.delay(450)
+            } else {
+                kotlinx.coroutines.delay(100)
+            }
+
+            val accessibilityService = com.soar.sparkai.feature.accessibility.service.SparkAccessibilityService.instance
+            val rootNode = accessibilityService?.rootInActiveWindow
+            val textNodes = if (rootNode != null) {
+                com.soar.sparkai.feature.accessibility.util.AccessibilityTextExtractor.extractVisibleTexts(rootNode)
+            } else {
+                emptyList()
+            }
+
+            if (textNodes.isNotEmpty()) {
+                AppLogger.i("FloatingService", "[AAMS] 检测到无障碍服务可用，已提取 ${textNodes.size} 个文本节点，进入高精度纯文本匹配管道")
+                AamsPipelineExecutor.executeTextModePipeline(
+                    context = this@FloatingService,
+                    service = this@FloatingService,
+                    module = module,
+                    textNodes = textNodes,
+                    setWidgetLoading = { isWidgetLoading = it },
+                    showFloatingWindow = { showFloatingWindow() }
+                )
+            } else {
+                AppLogger.i("FloatingService", "[AAMS] 无障碍服务未开启或未提取到文字，Fallback 传统截图多模态视觉管道")
+                val reader = imageReader
+                if (reader != null) {
+                    AamsPipelineExecutor.executeVisionModePipeline(
+                        context = this@FloatingService,
+                        service = this@FloatingService,
+                        reader = reader,
+                        module = module,
+                        isFirstTime = isFirstTime,
+                        setWidgetLoading = { isWidgetLoading = it },
+                        showFloatingWindow = { showFloatingWindow() }
+                    )
+                } else {
+                    Toast.makeText(this@FloatingService, "投屏截图管道未就绪，无法分析屏幕", Toast.LENGTH_SHORT).show()
+                    AamsFullscreenOverlayManager.removeFullscreenOverlay(this@FloatingService)
+                    showFloatingWindow()
+                }
+            }
+        }
+    }
+
+    /**
      * 初始化 WindowManager 布局参数
-     *
-     * 关键配置：
-     * - TYPE_APPLICATION_OVERLAY：Android 8.0 之后统一的悬浮窗层级类型
-     * - FLAG_NOT_FOCUSABLE：不能获取焦点，以避免拦截底层其他应用的软键盘输入与系统返回键
-     * - PixelFormat.TRANSLUCENT：透明通道以支持精美的圆角和毛玻璃效果
      */
     private fun initLayoutParams() {
         layoutParams = WindowManager.LayoutParams(
@@ -362,7 +476,6 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            // 初始挂载位置：屏幕右侧靠中
             val metrics = resources.displayMetrics
             x = metrics.widthPixels - 150
             y = metrics.heightPixels / 2
@@ -374,7 +487,6 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
      */
     private fun initComposeView() {
         composeView = ComposeView(this).apply {
-            // 建立完整的 ViewTree 所有者依赖，这对 Compose 必不可少
             setViewTreeLifecycleOwner(this@FloatingService)
             setViewTreeViewModelStoreOwner(this@FloatingService)
             setViewTreeSavedStateRegistryOwner(this@FloatingService)
@@ -382,27 +494,30 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             setContent {
                 AppTheme {
                     FloatingWidget(
+                        isLoading = this@FloatingService.isWidgetLoading,
                         onDrag = { dx, dy ->
-                            // 拖拽手势响应：更新悬浮窗位置
                             updateWindowPosition(this@FloatingService.layoutParams.x + dx, this@FloatingService.layoutParams.y + dy)
                         },
                         onDragEnd = {
-                            // 拖拽抬手响应：平滑吸附到最近的屏幕边缘
                             performSnappingAnimation()
                         },
                         onActionScreenshot = {
-                            // 触发截图流程
                             val startSelfIntent = Intent(this@FloatingService, FloatingService::class.java).apply {
                                 action = ACTION_TAKE_SCREENSHOT
                             }
                             startService(startSelfIntent)
                         },
+                        onActionExecuteModule = { moduleId ->
+                            val startSelfIntent = Intent(this@FloatingService, FloatingService::class.java).apply {
+                                action = ACTION_EXECUTE_MODULE
+                                putExtra(EXTRA_MODULE_ID, moduleId)
+                            }
+                            startService(startSelfIntent)
+                        },
                         onActionClose = {
-                            // 关闭服务
                             stopSelf()
                         },
                         onActionBackToApp = {
-                            // 返回主界面
                             val mainIntent = Intent(this@FloatingService, MainActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                             }
@@ -414,41 +529,30 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         }
     }
 
-    /**
-     * 更新悬浮窗在屏幕上的坐标位置
-     */
     private fun updateWindowPosition(x: Int, y: Int) {
         if (::composeView.isInitialized && composeView.parent != null) {
             val metrics = resources.displayMetrics
-            // 简单限制坐标越界，保持悬浮球在有效可视范围之内
             layoutParams.x = x.coerceIn(0, metrics.widthPixels - composeView.width)
             layoutParams.y = y.coerceIn(0, metrics.heightPixels - composeView.height)
             windowManager.updateViewLayout(composeView, layoutParams)
         }
     }
 
-    /**
-     * 执行平滑的智能吸边动画
-     */
     private fun performSnappingAnimation() {
         if (!::composeView.isInitialized || composeView.parent == null) return
         val metrics = resources.displayMetrics
         val screenWidth = metrics.widthPixels
         val viewWidth = composeView.width
 
-        // 判断当前位置距离左半屏近还是右半屏近，计算出目标 X 坐标
         val targetX = if (layoutParams.x + viewWidth / 2 < screenWidth / 2) {
             0
         } else {
             screenWidth - viewWidth
         }
 
-        AppLogger.i("FloatingService", "悬浮球智能吸边动画触发。当前 X: ${layoutParams.x}，目标 X: $targetX")
-
-        // 使用属性动画进行平滑的平移过渡
         val animator = ValueAnimator.ofInt(layoutParams.x, targetX).apply {
             duration = 300
-            interpolator = DecelerateInterpolator() // 减速插值器，提供高端优雅的吸附回弹感
+            interpolator = DecelerateInterpolator()
             addUpdateListener { animation ->
                 val animX = animation.animatedValue as Int
                 updateWindowPosition(animX, layoutParams.y)
@@ -457,37 +561,29 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
         animator.start()
     }
 
-    /**
-     * 隐藏悬浮窗（设为不可见且不占触摸通道）
-     */
     private fun hideFloatingWindow() {
         if (::composeView.isInitialized && composeView.parent != null) {
-            AppLogger.i("FloatingService", "隐藏悬浮窗口。状态 -> 不可见 (GONE)")
             composeView.visibility = View.GONE
         }
     }
 
-    /**
-     * 显示悬浮窗
-     */
     private fun showFloatingWindow() {
         if (::composeView.isInitialized) {
             if (composeView.parent == null) {
-                AppLogger.i("FloatingService", "初次挂载 Compose 悬浮卡片视图到系统窗口层。")
                 windowManager.addView(composeView, layoutParams)
             } else {
-                AppLogger.i("FloatingService", "显示悬浮球。状态 -> 可见 (VISIBLE)")
                 composeView.visibility = View.VISIBLE
             }
         }
     }
 
     override fun onDestroy() {
-        AppLogger.i("FloatingService", "前台服务即将销毁 (onDestroy)，正在释放悬浮窗及系统窗口资源。")
+        AppLogger.i("FloatingService", "悬浮窗前台服务注销中...")
         isServiceRunning = false
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         
-        // 优雅断开全局屏幕投屏常驻连接，彻底释放系统级媒体投影资源句柄
+        clearOverlays()
+        
         try {
             virtualDisplay?.release()
             imageReader?.close()
@@ -496,14 +592,13 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
             }
             mediaProjection?.stop()
         } catch (e: Exception) {
-            AppLogger.e("FloatingService", "销毁全局投屏长连接流水线发生异常: ${e.message}", e)
+            AppLogger.e("FloatingService", "断开投屏资源错误", e)
         }
         virtualDisplay = null
         imageReader = null
         mediaProjection = null
         projectionCallback = null
 
-        // 销毁时清理挂载的窗口，释放内存，避免 Activity/Service 泄漏
         if (::composeView.isInitialized && composeView.parent != null) {
             windowManager.removeView(composeView)
         }

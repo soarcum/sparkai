@@ -20,6 +20,9 @@ import java.io.OutputStream
 import java.net.URL
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,6 +33,12 @@ object FileTransferManager {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS) // SSE 长连接不需要读取超时
+        .build()
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
     private var sseCall: okhttp3.Call? = null
@@ -149,7 +158,7 @@ object FileTransferManager {
                 .post(progressBody)
                 .build()
 
-            OkHttpClient().newCall(request).execute().use { response ->
+            httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     onSuccess()
                 } else {
@@ -184,7 +193,7 @@ object FileTransferManager {
                 .post(requestBody)
                 .build()
 
-            OkHttpClient().newCall(request).execute().use { response ->
+            httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     onSuccess()
                 } else {
@@ -214,7 +223,7 @@ object FileTransferManager {
         val request = Request.Builder().url(downloadUrl).build()
 
         try {
-            OkHttpClient().newCall(request).execute().use { response ->
+            httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw Exception("下载请求失败: ${response.code}")
                 val bodyStream = response.body?.byteStream() ?: throw Exception("空的数据响应体")
                 
@@ -253,6 +262,47 @@ object FileTransferManager {
             if (!sparkAiDir.exists()) sparkAiDir.mkdirs()
             val destFile = File(sparkAiDir, filename)
             FileOutputStream(destFile)
+        }
+    }
+
+    /**
+     * 上传手机日志文件到电脑端
+     */
+    suspend fun uploadLogFile(
+        context: Context,
+        ip: String,
+        port: Int,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val logFile = File(context.cacheDir, "app_running.log")
+        if (!logFile.exists() || logFile.length() == 0L) {
+            onError("日志文件为空或不存在")
+            return@withContext
+        }
+        val size = logFile.length()
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val filename = "SparkAI_Log_$timestamp.log"
+        
+        try {
+            val inputStream = logFile.inputStream()
+            val progressBody = ProgressRequestBody(inputStream, size) { _, _ -> }
+
+            val uploadUrl = "http://$ip:$port/upload?filename=${Uri.encode(filename)}&size=$size"
+            val request = Request.Builder()
+                .url(uploadUrl)
+                .post(progressBody)
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    onSuccess()
+                } else {
+                    onError("服务器返回错误: ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            onError(e.message ?: "未知日志上传错误")
         }
     }
 

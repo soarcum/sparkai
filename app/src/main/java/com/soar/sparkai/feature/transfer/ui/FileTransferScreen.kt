@@ -307,7 +307,7 @@ fun FileTransferScreen(
                             Button(
                                 onClick = {
                                     if (inputText.isNotBlank()) {
-                                        viewModel.sendText(inputText)
+                                        viewModel.sendText(context, inputText)
                                         inputText = ""
                                     }
                                 },
@@ -329,7 +329,7 @@ fun FileTransferScreen(
                                         if (clipData != null && clipData.itemCount > 0) {
                                             val clipText = clipData.getItemAt(0).text?.toString() ?: ""
                                             if (clipText.isNotBlank()) {
-                                                viewModel.sendText(clipText)
+                                                viewModel.sendText(context, clipText)
                                             } else {
                                                 android.widget.Toast.makeText(context, "📋 剪贴板文本为空", android.widget.Toast.LENGTH_SHORT).show()
                                             }
@@ -353,12 +353,33 @@ fun FileTransferScreen(
             }
 
             // 3. 传输记录列表
-            Text(
-                text = "传输任务记录 (${viewModel.transferList.size})",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White.copy(alpha = 0.5f)
-            )
+            val totalBytes = viewModel.transferList.sumOf { it.size }
+            val totalSizeMB = totalBytes / (1024f * 1024f)
+            val totalSizeStr = if (totalSizeMB > 0.01f) {
+                String.format("%.2f MB", totalSizeMB)
+            } else {
+                "${totalBytes} B"
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "传输任务记录 (${viewModel.transferList.size})",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
+
+                Text(
+                    text = "📂 数字大小和: $totalSizeStr",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF00B894)
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -564,6 +585,39 @@ fun ConnectionCard(viewModel: FileTransferViewModel, onScanClick: () -> Unit) {
                         )
                     }
                 }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 自动连接 Switch 行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "自动连接电脑端",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Text(
+                        text = "进入此页面时自动连接上次成功的电脑 IP",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = viewModel.isAutoConnect,
+                    onCheckedChange = { viewModel.setAutoConnectEnabled(context, it) },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color(0xFF00B894),
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.1f)
+                    )
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))

@@ -8,9 +8,18 @@ interface Window {
     startFileServer: () => Promise<any>
     selectAndSendFile: () => Promise<any>
     openSaveDir: () => void
+    openFile: (filePath: string) => void
+    sendTextOffer: (text: string, isUrl: boolean) => Promise<string>
+    readClipboardImageAndOffer: () => Promise<any>
+    getSaveDir: () => Promise<{ customPath: string; defaultPath: string; activePath: string }>
+    selectSaveDir: () => Promise<any>
+    setSaveDir: (dirPath: string) => Promise<any>
     onServerLog: (callback: (data: any) => void) => void
     onTransferProgress: (callback: (data: any) => void) => void
     onFileReceived: (callback: (data: any) => void) => void
+    onTextReceived: (callback: (data: any) => void) => void
+    onAudioStreamData: (callback: (chunk: Uint8Array) => void) => void
+    onAudioStreamEnd: (callback: () => void) => void
   }
 }
 

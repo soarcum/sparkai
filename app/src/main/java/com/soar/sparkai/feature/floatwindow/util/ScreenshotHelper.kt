@@ -134,6 +134,73 @@ object ScreenshotHelper {
     }
 
     /**
+     * 为 AI 大模型分析提供纯内存级的屏幕截图，不进行外部持久化写入
+     */
+    fun captureScreenForAI(
+        context: Context,
+        imageReader: ImageReader,
+        isFirstTime: Boolean,
+        onComplete: (Bitmap?) -> Unit
+    ) {
+        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+
+        com.soar.sparkai.feature.floatwindow.ui.ScreenshotActivity.finishActivity()
+
+        CoroutineScope(Dispatchers.Default).launch {
+            if (isFirstTime) {
+                delay(500)
+            } else {
+                delay(200)
+            }
+
+            var image: Image? = null
+            var screenshotBitmap: Bitmap? = null
+            try {
+                var retryCount = 0
+                while (image == null && retryCount < 5) {
+                    image = imageReader.acquireLatestImage() ?: imageReader.acquireNextImage()
+                    if (image == null) {
+                        delay(50)
+                        retryCount++
+                    }
+                }
+
+                if (image != null) {
+                    val planes = image.planes
+                    val buffer = planes[0].buffer
+                    val pixelStride = planes[0].pixelStride
+                    val rowStride = planes[0].rowStride
+                    val rowPadding = rowStride - pixelStride * width
+
+                    val tempBitmap = Bitmap.createBitmap(
+                        width + rowPadding / pixelStride,
+                        height,
+                        Bitmap.Config.ARGB_8888
+                    )
+                    tempBitmap.copyPixelsFromBuffer(buffer)
+                    screenshotBitmap = Bitmap.createBitmap(tempBitmap, 0, 0, width, height)
+                    tempBitmap.recycle()
+                }
+            } catch (e: Exception) {
+                com.soar.sparkai.core.log.AppLogger.e("ScreenshotHelper", "AAMS抓取像素帧或转换 Bitmap 发生异常: ${e.message}", e)
+            } finally {
+                image?.close()
+            }
+
+            withContext(Dispatchers.Main) {
+                if (screenshotBitmap == null) {
+                    Toast.makeText(context, "未捕获到屏幕数据", Toast.LENGTH_SHORT).show()
+                }
+                onComplete(screenshotBitmap)
+            }
+        }
+    }
+
+    /**
      * 将 Bitmap 安全地保存至本地存储
      * 
      * 说明：Android 10+ 采用 MediaStore 实现，免存储读写权限，更安全合规；

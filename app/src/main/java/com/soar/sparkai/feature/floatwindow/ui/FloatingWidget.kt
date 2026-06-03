@@ -6,6 +6,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -21,8 +23,10 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Crop
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,7 +39,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.sqrt
+import androidx.compose.ui.platform.LocalContext
+import com.soar.sparkai.feature.ai.model.AamsModule
+import com.soar.sparkai.feature.ai.util.AamsModuleManager
 
 /**
  * 高端常驻悬浮窗及展开面板 Compose 视图
@@ -43,19 +49,35 @@ import kotlin.math.sqrt
  * 作用：绘制悬浮球及折叠展开的功能菜单。
  * 特色：
  * 1. 采用高饱和度渐变炫彩圆形悬浮球，支持柔和脉冲呼吸外发光。
- * 2. 独创的“位移判定点击算法”，完美解决了 WindowManager 下触摸冲突的世纪难题。
- * 3. 拟物化高斯模糊面板设计，带下沉微动触控反馈的精美图标按键。
+ * 2. 拟物化高斯模糊面板设计，带下沉微动触控反馈的精美图标按键。
+ * 3. 动态加载已启用的 AAMS 模块子面板，让 AI 自定义能力热插拔呈现。
  */
 @Composable
 fun FloatingWidget(
+    isLoading: Boolean,
     onDrag: (dx: Int, dy: Int) -> Unit,
     onDragEnd: () -> Unit,
     onActionScreenshot: () -> Unit,
+    onActionExecuteModule: (moduleId: String) -> Unit,
     onActionClose: () -> Unit,
     onActionBackToApp: () -> Unit
 ) {
     // 展开状态标记
     var isExpanded by remember { mutableStateOf(false) }
+    // 子模块选择列表展示标记
+    var showModuleList by remember { mutableStateOf(false) }
+
+    // 每次面板重新展开时，重置子模块的展开状态
+    LaunchedEffect(isExpanded) {
+        if (!isExpanded) {
+            showModuleList = false
+        }
+    }
+
+    val context = LocalContext.current
+    val enabledModules = remember(isExpanded) {
+        AamsModuleManager.getAllModules(context).filter { it.enabled }
+    }
 
     // 呼吸动画控制：使未展开的悬浮球自带微光呼吸感
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -96,7 +118,7 @@ fun FloatingWidget(
                                 Color(0xFF8A2387), // 优雅深紫
                                 Color(0xFFE94057), // 炫彩玫红
                                 Color(0xFFF27121)  // 活力暖橙
-                            )
+                             )
                         ),
                         shape = CircleShape
                     )
@@ -105,7 +127,6 @@ fun FloatingWidget(
                         detectTapGestures(
                             onTap = {
                                 AppLogger.i("FloatingWidget", "炫彩悬浮球被轻点，正在优雅展开快捷助理面板。")
-                                // 专门捕获原地高灵敏轻触，瞬间优雅展开
                                 isExpanded = true
                             }
                         )
@@ -113,7 +134,6 @@ fun FloatingWidget(
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragEnd = {
-                                // 拖动结束，执行贴边对齐
                                 onDragEnd()
                             },
                             onDragCancel = {
@@ -124,16 +144,25 @@ fun FloatingWidget(
                                 onDrag(dragAmount.x.toInt(), dragAmount.y.toInt())
                             }
                         )
-                    },
-                contentAlignment = Alignment.Center
+                    }
             ) {
-                // 圆形球内展示 SparkAI 标志首字母 S
-                Text(
-                    text = "S",
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .align(Alignment.Center)
+                    )
+                } else {
+                    Text(
+                        text = "S",
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
             }
         } else {
             // ================== 2. 展开态：高级拟物毛玻璃控制卡片 ==================
@@ -144,14 +173,13 @@ fun FloatingWidget(
             ) {
                 Column(
                     modifier = Modifier
-                        .width(220.dp)
+                        .width(280.dp)
                         .shadow(
                             elevation = 12.dp, 
                             shape = RoundedCornerShape(24.dp),
                             clip = false
                         )
                         .background(
-                            // 完美的半透卡片背景，带高级边缘描边
                             color = Color(0xF21F1F2E), 
                             shape = RoundedCornerShape(24.dp)
                         )
@@ -184,7 +212,6 @@ fun FloatingWidget(
                                 ) {
                                     AppLogger.i("FloatingWidget", "折叠快捷图标被点击，正在将面板收折回悬浮球。")
                                     isExpanded = false
-                                    // 点击折叠后，再次检测一次吸边以防重叠
                                     onDragEnd()
                                 }
                         )
@@ -197,7 +224,23 @@ fun FloatingWidget(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
-                        // 1. 截图按键
+                        // 1. AI 自定义模块智能菜单触发键
+                        ActionButton(
+                            icon = Icons.Rounded.AutoAwesome,
+                            label = "AI模块",
+                            backgroundColor = Color(0xFFF1C40F).copy(alpha = 0.15f),
+                            tint = Color(0xFFF39C12),
+                            onClick = {
+                                if (enabledModules.isEmpty()) {
+                                    android.widget.Toast.makeText(context, "请先在主页“AI自定义模块”装载并启用模块", android.widget.Toast.LENGTH_SHORT).show()
+                                } else {
+                                    AppLogger.i("FloatingWidget", "展开 AAMS 子模块配置列表。")
+                                    showModuleList = !showModuleList
+                                }
+                            }
+                        )
+
+                        // 2. 截图按键
                         ActionButton(
                             icon = Icons.Rounded.Crop,
                             label = "截图",
@@ -210,7 +253,7 @@ fun FloatingWidget(
                             }
                         )
 
-                        // 2. 主页按键
+                        // 3. 主页按键
                         ActionButton(
                             icon = Icons.Rounded.Home,
                             label = "主页",
@@ -222,7 +265,7 @@ fun FloatingWidget(
                             }
                         )
 
-                        // 3. 关闭按键
+                        // 4. 关闭按键
                         ActionButton(
                             icon = Icons.Rounded.Close,
                             label = "退出",
@@ -233,6 +276,59 @@ fun FloatingWidget(
                                 onActionClose()
                             }
                         )
+                    }
+
+                    // ================== 子模块列表平滑滑出展示 ==================
+                    AnimatedVisibility(
+                        visible = showModuleList && enabledModules.isNotEmpty(),
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp)
+                                .background(Color(0xFF141421), RoundedCornerShape(16.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "🧩 请选择要运行的 AI 模块:",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            enabledModules.forEach { module ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            AppLogger.i("FloatingWidget", "触发执行 AAMS 模块: ${module.name} (ID: ${module.id})")
+                                            isExpanded = false
+                                            showModuleList = false
+                                            onActionExecuteModule(module.id)
+                                        }
+                                        .padding(vertical = 10.dp, horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                color = if (module.isSystem) Color(0xFFF1C40F) else Color(0xFF00B894),
+                                                shape = CircleShape
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = module.name,
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -261,7 +357,6 @@ fun ActionButton(
     tint: Color,
     onClick: () -> Unit
 ) {
-    // 处理按压交互的动画缩放效果，呈现完美下沉触感
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
