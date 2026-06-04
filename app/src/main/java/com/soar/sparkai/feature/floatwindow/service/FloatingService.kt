@@ -427,6 +427,28 @@ class FloatingService : Service(), ViewModelStoreOwner, SavedStateRegistryOwner 
                 emptyList()
             }
 
+            // 博彩抽水模块：赔率为图像渲染，无障碍只会抓到状态栏等系统文本误导路由，故强制走视觉管道
+            if (module.id == "sys_rake_calculator") {
+                AppLogger.i("FloatingService", "[AAMS] 博彩抽水模块强制走视觉管道，跳过无障碍路由")
+                val reader = imageReader
+                if (reader != null) {
+                    AamsPipelineExecutor.executeRakeVisionPipeline(
+                        context = this@FloatingService,
+                        service = this@FloatingService,
+                        reader = reader,
+                        module = module,
+                        isFirstTime = isFirstTime,
+                        setWidgetLoading = { isWidgetLoading = it },
+                        showFloatingWindow = { showFloatingWindow() }
+                    )
+                } else {
+                    Toast.makeText(this@FloatingService, "投屏截图管道未就绪，无法分析屏幕", Toast.LENGTH_SHORT).show()
+                    AamsFullscreenOverlayManager.removeFullscreenOverlay(this@FloatingService)
+                    showFloatingWindow()
+                }
+                return@launch
+            }
+
             if (textNodes.isNotEmpty()) {
                 AppLogger.i("FloatingService", "[AAMS] 检测到无障碍服务可用，已提取 ${textNodes.size} 个文本节点，进入高精度纯文本匹配管道")
                 AamsPipelineExecutor.executeTextModePipeline(
